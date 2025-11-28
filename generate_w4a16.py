@@ -183,6 +183,12 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--enable_hooks",
+        action="store_true",
+        default=False,
+        help="Whether to enable hooks for runtime dumping."
+    )
     args = parser.parse_args()
     _validate_args(args)
 
@@ -723,6 +729,14 @@ def generate(args):
         )
         t_init_total = time.time() - t_init_start
         logging.info(f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
+
+        if args.enable_hooks and rank == 0:
+            from wan.utils.hook_utils import FSDPRuntimeDumper
+            dumper = FSDPRuntimeDumper()
+            dumper.register_hooks(wan_t2v.text_encoder.model, prefix="t5_encoder")
+            dumper.register_hooks(wan_t2v.vae.model, prefix="vae")
+            dumper.register_hooks(wan_t2v.high_noise_model, prefix="high_noise_model")
+            dumper.register_hooks(wan_t2v.low_noise_model, prefix="low_noise_model")
 
         # Timing: Video generation
         t_gen_start = time.time()
