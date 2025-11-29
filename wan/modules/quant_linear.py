@@ -108,7 +108,7 @@ class QuantizedLinear(nn.Module):
 
         # Quantize input nvfp4
         input_global_scale = ((FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) /
-                    torch.amax(input.flatten(), dim=-1)).to(torch.float32)
+                    torch.amax(torch.abs(input.flatten()), dim=-1)).to(torch.float32)
         alpha = 1.0 / (input_global_scale * self.weight_global_scale)
         assert (input.dim() == 3 or input.dim() == 2), "input should be 3D or 2D"
         if input.dim() == 3:
