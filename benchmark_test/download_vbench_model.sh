@@ -1,41 +1,41 @@
 #!/bin/bash
-# 下载VBench所需的模型文件
+# Download model files required by VBench
 
 CACHE_DIR="${HOME}/.cache/vbench"
 MODEL_URL="https://huggingface.co/OpenGVLab/VBench_Used_Models/resolve/main/ViClip-InternVid-10M-FLT.pth"
 MODEL_DIR="${CACHE_DIR}/ViCLIP"
 MODEL_PATH="${MODEL_DIR}/ViClip-InternVid-10M-FLT.pth"
 
-echo "下载VBench模型文件..."
-echo "目标路径: ${MODEL_PATH}"
+echo "Downloading VBench model files..."
+echo "Target path: ${MODEL_PATH}"
 
-# 创建目录
+# Create directory
 mkdir -p "${MODEL_DIR}"
 
-# 检查是否已存在
+# Check if already exists
 if [ -f "${MODEL_PATH}" ]; then
-    echo "模型文件已存在: ${MODEL_PATH}"
+    echo "Model file already exists: ${MODEL_PATH}"
     exit 0
 fi
 
-# 尝试使用curl下载（如果没有wget）
+# Try using curl to download (if wget is not available)
 if command -v wget &> /dev/null; then
-    echo "使用wget下载..."
+    echo "Using wget to download..."
     wget "${MODEL_URL}" -O "${MODEL_PATH}"
 elif command -v curl &> /dev/null; then
-    echo "使用curl下载..."
+    echo "Using curl to download..."
     curl -L "${MODEL_URL}" -o "${MODEL_PATH}"
 else
-    echo "错误: 未找到wget或curl，请先安装其中一个工具"
-    echo "安装wget: sudo apt-get install wget"
-    echo "或安装curl: sudo apt-get install curl"
+    echo "Error: wget or curl not found, please install one of them"
+    echo "Install wget: sudo apt-get install wget"
+    echo "Or install curl: sudo apt-get install curl"
     exit 1
 fi
 
 if [ -f "${MODEL_PATH}" ]; then
-    echo "下载成功: ${MODEL_PATH}"
+    echo "Download successful: ${MODEL_PATH}"
 else
-    echo "下载失败，请检查网络连接"
+    echo "Download failed, please check network connection"
     exit 1
 fi
 
