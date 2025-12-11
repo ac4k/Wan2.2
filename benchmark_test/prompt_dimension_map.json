@@ -1,0 +1,186 @@
+{
+  "a person swimming in ocean": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a bicycle gliding through a snowy field": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a motorcycle turning a corner": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a bus turning a corner": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a truck stuck in traffic during rush hour": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a bird flying over a snowy forest": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a dog running happily": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a cow bending down to drink water from a river": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "a bear climbing a tree": [
+    "dynamic_degree",
+    "motion_smoothness",
+    "subject_consistency"
+  ],
+  "alley": [
+    "background_consistency"
+  ],
+  "barn": [
+    "background_consistency"
+  ],
+  "castle": [
+    "background_consistency"
+  ],
+  "downtown": [
+    "background_consistency"
+  ],
+  "indoor gymnasium": [
+    "background_consistency"
+  ],
+  "kitchen": [
+    "background_consistency"
+  ],
+  "nursery": [
+    "background_consistency"
+  ],
+  "river": [
+    "background_consistency"
+  ],
+  "indoor swimming pool": [
+    "background_consistency"
+  ],
+  "Close up of grapes on a rotating table.": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "An animated painting of fluffy white clouds moving in sky.": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "time lapse of sunrise on mars.": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "Robot dancing in Times Square.": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "A corgi is playing drum kit.": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "A super cool giant robot in Cyberpunk Beijing": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "A cat eating food out of a bowl": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "A raccoon dressed in suit playing the trumpet, stage background": [
+    "aesthetic_quality",
+    "imaging_quality",
+    "overall_consistency"
+  ],
+  "A beautiful coastal beach in spring, waves lapping on sand, in super slow motion": [
+    "temporal_style"
+  ],
+  "The bund Shanghai, zoom out": [
+    "temporal_style"
+  ],
+  "a shark is swimming in the ocean, tilt up": [
+    "temporal_style"
+  ],
+  "A panda drinking coffee in a cafe in Paris, with an intense shaking effect": [
+    "temporal_style"
+  ],
+  "Gwen Stacy reading a book, in super slow motion": [
+    "temporal_style"
+  ],
+  "A boat sailing leisurely along the Seine River with the Eiffel Tower in background, zoom out": [
+    "temporal_style"
+  ],
+  "A couple in formal evening wear going home get caught in a heavy downpour with umbrellas, tilt up": [
+    "temporal_style"
+  ],
+  "An astronaut flying in space, with an intense shaking effect": [
+    "temporal_style"
+  ],
+  "A person is riding a bike": [
+    "human_action"
+  ],
+  "A person is skateboarding": [
+    "human_action"
+  ],
+  "A person is shooting basketball": [
+    "human_action"
+  ],
+  "A person is tai chi": [
+    "human_action"
+  ],
+  "A person is bungee jumping": [
+    "human_action"
+  ],
+  "A person is washing dishes": [
+    "human_action"
+  ],
+  "A person is sword fighting": [
+    "human_action"
+  ],
+  "A person is climbing a rope": [
+    "human_action"
+  ],
+  "In a still frame, a stop sign": [
+    "temporal_flickering"
+  ],
+  "In a still frame, courtyard": [
+    "temporal_flickering"
+  ],
+  "A tranquil tableau of restaurant": [
+    "temporal_flickering"
+  ],
+  "A tranquil tableau of a bunch of grapes": [
+    "temporal_flickering"
+  ],
+  "A tranquil tableau of the jail cell was small and dimly lit, with cold, steel bars": [
+    "temporal_flickering"
+  ],
+  "A tranquil tableau of the Stonehenge presented itself as an enigmatic puzzle, each colossal stone meticulously placed against the backdrop of tranquility": [
+    "temporal_flickering"
+  ],
+  "A tranquil tableau of at the edge of the Arabian Desert, the ancient city of Petra beckoned with its enigmatic rock-carved façades": [
+    "temporal_flickering"
+  ],
+  "In a still frame, amidst the hushed ambiance of the traditional tea room, a meticulously arranged tea set awaited, with porcelain cups, a bamboo whisk": [
+    "temporal_flickering"
+  ]
+}
