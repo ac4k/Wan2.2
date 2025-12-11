@@ -210,7 +210,8 @@ def _init_logging(rank):
 class WanT2VW4A16:
     """
     WanT2V with W4A16 quantization support.
-    T5 and VAE use original data types, DiT models use W4A16.
+    T5 and DiT models use NVFP4 quantization, VAE uses original data type.
+    T5 NVFP4 quantized weights are required
     """
 
     def __init__(
@@ -269,22 +270,33 @@ class WanT2VW4A16:
         from functools import partial
         shard_fn = partial(shard_model, device_id=device_id)
         
-        # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
-        from wan.modules.t5 import T5EncoderModel
+        # T5 and VAE loading - T5 must use NVFP4 quantization
         from wan.modules.vae2_1 import Wan2_1_VAE
         
-        # Timing: T5 loading
+        # Check if T5 quantized weights exist - required for this mode
+        t5_quantized_dir = os.path.join(quantized_ckpt_dir, "t5_nvfp4")
+        if not os.path.exists(t5_quantized_dir) or not os.path.isdir(t5_quantized_dir):
+            raise FileNotFoundError(
+                f"T5 NVFP4 quantized weights not found at: {t5_quantized_dir}\n"
+                f"Please run the quantization script first:\n"
+                f"  cd /path/to/LightX2V\n"
+                f"  ./quantize_t5_nvfp4.sh <original_t5_checkpoint> {t5_quantized_dir}"
+            )
+
+        # Timing: T5 loading with NVFP4 quantization
         t_start = time.time()
-        logging.info(f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
-        self.text_encoder = T5EncoderModel(
+        logging.info(f"Loading T5 with NVFP4 quantization from: {t5_quantized_dir}")
+        from wan.modules.t5_quant_model_nvfp4 import create_quantized_t5_encoder_nvfp4
+        self.text_encoder = create_quantized_t5_encoder_nvfp4(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
             checkpoint_path=os.path.join(original_ckpt_dir, config.t5_checkpoint),
+            quantized_checkpoint_dir=t5_quantized_dir,
             tokenizer_path=os.path.join(original_ckpt_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
         t_t5 = time.time() - t_start
-        logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
+        logging.info(f"[TIMING] T5 model loading (NVFP4): {t_t5:.2f}s")
 
         # Timing: VAE loading
         t_start = time.time()
