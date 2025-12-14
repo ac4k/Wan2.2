@@ -37,7 +37,7 @@ def rope_params(max_seq_len, dim, theta=10000):
 
 
 @torch.amp.autocast('cuda', enabled=False)
-def rope_apply(x, grid_sizes, freqs):
+def rope_apply(x, grid_sizes, freqs, data_type=torch.bfloat16):
     n, c = x.size(2), x.size(3) // 2
 
     # split freqs
@@ -61,10 +61,10 @@ def rope_apply(x, grid_sizes, freqs):
         # apply rotary embedding
         x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
         x_i = torch.cat([x_i, x[i, seq_len:]])
-
+        x_i = x_i.to(data_type)
         # append to collection
         output.append(x_i)
-    return torch.stack(output).float()
+    return torch.stack(output)
 
 
 class WanRMSNorm(nn.Module):
@@ -143,8 +143,8 @@ class WanSelfAttention(nn.Module):
 
         q, k, v = qkv_fn(x)
         if os.getenv("USE_SAGEATTN") == "1":
-            x = sageattn(rope_apply(q, grid_sizes, freqs).to(torch.float16),
-                rope_apply(k, grid_sizes, freqs).to(torch.float16),
+            x = sageattn(rope_apply(q, grid_sizes, freqs, data_type=torch.float16),
+                rope_apply(k, grid_sizes, freqs, data_type=torch.float16),
                 v.to(torch.float16), tensor_layout="NHD",
                 is_causal=False).to(torch.bfloat16)
         else:
