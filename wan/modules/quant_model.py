@@ -21,7 +21,6 @@ def replace_linear_with_quantized(model, weight_dict):
     # modules to quantize: self_attn, cross_attn, ffn
     target_modules = ['self_attn', 'cross_attn', 'ffn']
 
-    # Replace Linear layers in blocks
     for i, block in enumerate(model.blocks):
         # Self attention: q, k, v, o
         for name in ['q', 'k', 'v', 'o']:
@@ -93,7 +92,6 @@ def replace_linear_with_quantized(model, weight_dict):
 
 
 def _create_quantized_linear(original_linear, weight_key, weight_dict):
-    in_features = original_linear.in_features
     out_features = original_linear.out_features
     bias = original_linear.bias is not None
 
@@ -102,12 +100,10 @@ def _create_quantized_linear(original_linear, weight_key, weight_dict):
     weight_global_scale_key = f"{weight_key}_global_scale"
 
     if weight_key not in weight_dict or weight_scale_key not in weight_dict or weight_global_scale_key not in weight_dict:
-        # Quantized weights don't exist, return None to skip quantization
         return None
 
-    quant_linear = QuantizedLinear(in_features, out_features, bias=bias)
+    quant_linear = QuantizedLinear(out_features, bias=bias)
 
-    # Load quantized weights
     weight_fp4 = weight_dict[weight_key]  # uint8, packed fp4
     weight_scale = weight_dict[weight_scale_key]  # float8_e4m3fn, swizzled
     weight_global_scale = weight_dict[weight_global_scale_key]  # float32
@@ -142,8 +138,6 @@ def load_quantized_weights(checkpoint_dir, subfolder=None):
         with safe_open(file_path, framework="pt") as f:
             for key in f.keys():
                 weight_dict[key] = f.get_tensor(key)
-
-    calib_path = os.path.join(checkpoint_path, "calib.pt")
 
     return weight_dict
 

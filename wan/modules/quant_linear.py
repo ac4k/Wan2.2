@@ -17,10 +17,8 @@ class QuantizedLinear(nn.Module):
     Activations remain in BF16 (matching Wan2.2 T2V 14B model).
     """
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, out_features, bias=True):
         super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
 
         # Register buffers for quantized weights
         self.register_buffer('weight_fp4', None)  # uint8, packed fp4
@@ -28,10 +26,6 @@ class QuantizedLinear(nn.Module):
         self.register_buffer('weight_global_scale', None)  # float32
         self.register_buffer(
             'bias', None if not bias else torch.zeros(out_features))
-
-        # Cache for dequantized weights (optional optimization)
-        self._dequantized_weight = None
-        self._weight_cached = False
         # Backup for weight_scale to restore dtype after conversion
         self._weight_scale_backup = None
 
@@ -44,32 +38,30 @@ class QuantizedLinear(nn.Module):
         self.weight_global_scale = weight_global_scale
         if bias is not None:
             self.bias = bias
-        self._weight_cached = False
-        self._dequantized_weight = None
 
     def _apply(self, fn):
         """
         Override _apply to preserve weight_scale dtype as float8_e4m3fn.
         This is called by to(), cuda(), cpu(), etc. to apply transformations.
         """
-        # Use the persistent backup if available, otherwise create a temporary one
+
         weight_scale_backup = None
         if self._weight_scale_backup is not None:
             weight_scale_backup = self._weight_scale_backup
         elif self.weight_scale is not None:
             weight_scale_backup = self.weight_scale.clone()
 
-        # Apply function to all buffers and parameters
+        # Apply base function to all buffers and parameters
         result = super()._apply(fn)
 
         # Restore weight_scale to float8_e4m3fn if it was changed
         if weight_scale_backup is not None and self.weight_scale is not None:
-            # If dtype was changed, restore it while keeping the new device
+            # restore dtype
             if self.weight_scale.dtype != torch.float8_e4m3fn:
                 current_device = self.weight_scale.device
                 self.weight_scale = weight_scale_backup.to(
                     device=current_device, dtype=torch.float8_e4m3fn)
-            # If only device changed, update device while keeping dtype
+            # restore device
             elif self.weight_scale.device != weight_scale_backup.device:
                 current_device = self.weight_scale.device
                 self.weight_scale = weight_scale_backup.to(
@@ -80,13 +72,6 @@ class QuantizedLinear(nn.Module):
     def forward(self, input):
         """
         Forward pass with BF16 activations and dequantized BF16 weights.
-        TODO: Skip actual computation for memory/flow verification.
-
-        Args:
-            input: Input tensor in BF16, shape (..., in_features)
-
-        Returns:
-            Output tensor in BF16, shape (..., out_features)
         """
         # Ensure weight_scale is in correct dtype (float8_e4m3fn)
         # This is a safety check - the _apply method should prevent dtype conversion
@@ -100,7 +85,7 @@ class QuantizedLinear(nn.Module):
         if input.dtype != torch.bfloat16:
             input = input.to(torch.bfloat16)
 
-        # Quantize input nvfp4
+        # Quantize input to nvfp4
         input_global_scale = ((FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) /
                               torch.amax(torch.abs(input.flatten()), dim=-1)).to(torch.float32)
         alpha = 1.0 / (input_global_scale * self.weight_global_scale)
