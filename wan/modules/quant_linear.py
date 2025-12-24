@@ -9,30 +9,32 @@ from ac4k_kernel.ops import nvfp4_matmul, nvfp4_quant
 FLOAT4_E2M1_MAX = 6.0
 FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
 
+
 class QuantizedLinear(nn.Module):
     """
     Quantized Linear layer for W4A16.
     Weights are stored in NVFP4 format and dequantized to BF16 for computation.
     Activations remain in BF16 (matching Wan2.2 T2V 14B model).
     """
-    
+
     def __init__(self, in_features, out_features, bias=True):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        
+
         # Register buffers for quantized weights
         self.register_buffer('weight_fp4', None)  # uint8, packed fp4
         self.register_buffer('weight_scale', None)  # float8_e4m3fn, swizzled
         self.register_buffer('weight_global_scale', None)  # float32
-        self.register_buffer('bias', None if not bias else torch.zeros(out_features))
-        
+        self.register_buffer(
+            'bias', None if not bias else torch.zeros(out_features))
+
         # Cache for dequantized weights (optional optimization)
         self._dequantized_weight = None
         self._weight_cached = False
         # Backup for weight_scale to restore dtype after conversion
         self._weight_scale_backup = None
-    
+
     def load_quantized_weights(self, weight_fp4, weight_scale, weight_global_scale, bias=None):
         self.weight_fp4 = weight_fp4
         self.weight_scale = weight_scale
@@ -44,7 +46,7 @@ class QuantizedLinear(nn.Module):
             self.bias = bias
         self._weight_cached = False
         self._dequantized_weight = None
-    
+
     def _apply(self, fn):
         """
         Override _apply to preserve weight_scale dtype as float8_e4m3fn.
@@ -65,11 +67,13 @@ class QuantizedLinear(nn.Module):
             # If dtype was changed, restore it while keeping the new device
             if self.weight_scale.dtype != torch.float8_e4m3fn:
                 current_device = self.weight_scale.device
-                self.weight_scale = weight_scale_backup.to(device=current_device, dtype=torch.float8_e4m3fn)
+                self.weight_scale = weight_scale_backup.to(
+                    device=current_device, dtype=torch.float8_e4m3fn)
             # If only device changed, update device while keeping dtype
             elif self.weight_scale.device != weight_scale_backup.device:
                 current_device = self.weight_scale.device
-                self.weight_scale = weight_scale_backup.to(device=current_device, dtype=torch.float8_e4m3fn)
+                self.weight_scale = weight_scale_backup.to(
+                    device=current_device, dtype=torch.float8_e4m3fn)
 
         return result
 
@@ -77,10 +81,10 @@ class QuantizedLinear(nn.Module):
         """
         Forward pass with BF16 activations and dequantized BF16 weights.
         TODO: Skip actual computation for memory/flow verification.
-        
+
         Args:
             input: Input tensor in BF16, shape (..., in_features)
-        
+
         Returns:
             Output tensor in BF16, shape (..., out_features)
         """
@@ -98,17 +102,19 @@ class QuantizedLinear(nn.Module):
 
         # Quantize input nvfp4
         input_global_scale = ((FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) /
-                    torch.amax(torch.abs(input.flatten()), dim=-1)).to(torch.float32)
+                              torch.amax(torch.abs(input.flatten()), dim=-1)).to(torch.float32)
         alpha = 1.0 / (input_global_scale * self.weight_global_scale)
-        assert (input.dim() == 3 or input.dim() == 2), "input should be 3D or 2D"
+        assert (input.dim() == 3 or input.dim()
+                == 2), "input should be 3D or 2D"
         if input.dim() == 3:
             assert input.shape[0] == 1, "batch size should be 1"
             input = input.squeeze(0)
-        input_fp4, input_scale_interleaved = nvfp4_quant(input, input_global_scale)
+        input_fp4, input_scale_interleaved = nvfp4_quant(
+            input, input_global_scale)
 
         if self.bias is not None and self.bias.dim() == 1:
             self.bias = self.bias.unsqueeze(0)
-        output = nvfp4_matmul(input_fp4, self.weight_fp4, input_scale_interleaved, self.weight_scale, alpha, self.bias)
-        
-        return output
+        output = nvfp4_matmul(input_fp4, self.weight_fp4,
+                              input_scale_interleaved, self.weight_scale, alpha, self.bias)
 
+        return output

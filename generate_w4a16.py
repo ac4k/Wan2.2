@@ -1,4 +1,13 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+from wan.utils.utils import merge_video_audio, save_video, str2bool
+from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
+from wan.distributed.util import init_distributed_group
+from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
+import wan
+from PIL import Image
+import torch.distributed as dist
+import torch
+import random
 import argparse
 import logging
 import os
@@ -8,18 +17,6 @@ import warnings
 from datetime import datetime
 
 warnings.filterwarnings('ignore')
-
-import random
-
-import torch
-import torch.distributed as dist
-from PIL import Image
-
-import wan
-from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
-from wan.distributed.util import init_distributed_group
-from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
-from wan.utils.utils import merge_video_audio, save_video, str2bool
 
 
 EXAMPLE_PROMPT = {
@@ -284,20 +281,23 @@ class WanT2VW4A16:
         from wan.distributed.fsdp import shard_model
         from functools import partial
         shard_fn = partial(shard_model, device_id=device_id)
-        
+
         # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
         from wan.modules.t5 import T5EncoderModel
         from wan.modules.vae2_1 import Wan2_1_VAE
 
         # Timing: T5 loading
         t_start = time.time()
-        logging.info(f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
+        logging.info(
+            f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
-            checkpoint_path=os.path.join(original_ckpt_dir, config.t5_checkpoint),
-            tokenizer_path=os.path.join(original_ckpt_dir, config.t5_tokenizer),
+            checkpoint_path=os.path.join(
+                original_ckpt_dir, config.t5_checkpoint),
+            tokenizer_path=os.path.join(
+                original_ckpt_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
         t_t5 = time.time() - t_start
         logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
@@ -313,9 +313,10 @@ class WanT2VW4A16:
         logging.info(f"[TIMING] VAE model loading: {t_vae:.2f}s")
 
         # Load quantized DiT models from quantized_ckpt_dir
-        logging.info(f"Loading quantized DiT models from: {quantized_ckpt_dir}")
+        logging.info(
+            f"Loading quantized DiT models from: {quantized_ckpt_dir}")
         from wan.modules.quant_model import create_quantized_wan_model
-        
+
         # Timing: Low noise model loading
         t_start = time.time()
         self.low_noise_model = create_quantized_wan_model(
@@ -333,7 +334,8 @@ class WanT2VW4A16:
             shard_fn=shard_fn,
             convert_model_dtype=convert_model_dtype)
         t_low_config = time.time() - t_start
-        logging.info(f"[TIMING] Low noise model configuration: {t_low_config:.2f}s")
+        logging.info(
+            f"[TIMING] Low noise model configuration: {t_low_config:.2f}s")
 
         # Timing: High noise model loading
         t_start = time.time()
@@ -352,9 +354,11 @@ class WanT2VW4A16:
             shard_fn=shard_fn,
             convert_model_dtype=convert_model_dtype)
         t_high_config = time.time() - t_start
-        logging.info(f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
-        
-        logging.info(f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
+        logging.info(
+            f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
+
+        logging.info(
+            f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
 
         if use_sp:
             from wan.distributed.util import get_world_size
@@ -414,7 +418,8 @@ class WanT2VW4A16:
                 getattr(self, required_model_name).to(self.device)
         t_elapsed = time.time() - t_start
         if t_elapsed > 0.1:  # Only log if it takes significant time
-            logging.info(f"[TIMING] Model switch ({required_model_name}): {t_elapsed:.3f}s")
+            logging.info(
+                f"[TIMING] Model switch ({required_model_name}): {t_elapsed:.3f}s")
         return getattr(self, required_model_name)
 
     def generate(self,
@@ -466,18 +471,20 @@ class WanT2VW4A16:
             self.text_encoder.model.to(self.device)
             t_move_elapsed = time.time() - t_move
             if t_move_elapsed > 0.1:
-                logging.info(f"[TIMING] T5 model move to GPU: {t_move_elapsed:.3f}s")
-            
+                logging.info(
+                    f"[TIMING] T5 model move to GPU: {t_move_elapsed:.3f}s")
+
             t_encode = time.time()
             context = self.text_encoder([input_prompt], self.device)
             t_encode_elapsed = time.time() - t_encode
             logging.info(f"[TIMING] T5 encode prompt: {t_encode_elapsed:.3f}s")
-            
+
             t_encode_null = time.time()
             context_null = self.text_encoder([n_prompt], self.device)
             t_encode_null_elapsed = time.time() - t_encode_null
-            logging.info(f"[TIMING] T5 encode negative prompt: {t_encode_null_elapsed:.3f}s")
-            
+            logging.info(
+                f"[TIMING] T5 encode negative prompt: {t_encode_null_elapsed:.3f}s")
+
             if offload_model:
                 self.text_encoder.model.cpu()
         else:
@@ -488,7 +495,7 @@ class WanT2VW4A16:
             context_null = [t.to(self.device) for t in context_null]
             t_encode_elapsed = time.time() - t_encode
             logging.info(f"[TIMING] T5 encode (CPU): {t_encode_elapsed:.3f}s")
-        
+
         t_t5_total = time.time() - t_start
         logging.info(f"[TIMING] T5 encoding total: {t_t5_total:.3f}s")
 
@@ -547,14 +554,14 @@ class WanT2VW4A16:
 
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
-            
+
             # Timing: Sampling loop
             t_sampling_start = time.time()
             total_model_time = 0.0
             total_cond_time = 0.0
             total_uncond_time = 0.0
             total_scheduler_time = 0.0
-            
+
             for step_idx, t in enumerate(tqdm(timesteps, desc="Sampling")):
                 t_step_start = time.time()
                 latent_model_input = latents
@@ -567,16 +574,16 @@ class WanT2VW4A16:
                     t, boundary, offload_model)
                 t_model_prep_elapsed = time.time() - t_model_prep
                 total_model_time += t_model_prep_elapsed
-                
+
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
-                
+
                 t_cond = time.time()
                 noise_pred_cond = model(
                     latent_model_input, t=timestep, **arg_c)[0]
                 t_cond_elapsed = time.time() - t_cond
                 total_cond_time += t_cond_elapsed
-                
+
                 t_uncond = time.time()
                 noise_pred_uncond = model(
                     latent_model_input, t=timestep, **arg_null)[0]
@@ -595,25 +602,26 @@ class WanT2VW4A16:
                     generator=seed_g)[0]
                 t_scheduler_elapsed = time.time() - t_scheduler
                 total_scheduler_time += t_scheduler_elapsed
-                
+
                 latents = [temp_x0.squeeze(0)]
-                
+
                 t_step_elapsed = time.time() - t_step_start
                 if step_idx % 10 == 0 or step_idx == len(timesteps) - 1:
                     logging.info(f"[TIMING] Step {step_idx}/{len(timesteps)-1}: "
-                               f"total={t_step_elapsed:.3f}s, "
-                               f"model_prep={t_model_prep_elapsed:.3f}s, "
-                               f"cond={t_cond_elapsed:.3f}s, "
-                               f"uncond={t_uncond_elapsed:.3f}s, "
-                               f"scheduler={t_scheduler_elapsed:.3f}s")
-            
+                                 f"total={t_step_elapsed:.3f}s, "
+                                 f"model_prep={t_model_prep_elapsed:.3f}s, "
+                                 f"cond={t_cond_elapsed:.3f}s, "
+                                 f"uncond={t_uncond_elapsed:.3f}s, "
+                                 f"scheduler={t_scheduler_elapsed:.3f}s")
+
             t_sampling_total = time.time() - t_sampling_start
-            logging.info(f"[TIMING] Sampling loop total: {t_sampling_total:.2f}s")
+            logging.info(
+                f"[TIMING] Sampling loop total: {t_sampling_total:.2f}s")
             logging.info(f"[TIMING] Sampling breakdown - "
-                       f"model_prep: {total_model_time:.2f}s, "
-                       f"cond: {total_cond_time:.2f}s, "
-                       f"uncond: {total_uncond_time:.2f}s, "
-                       f"scheduler: {total_scheduler_time:.2f}s")
+                         f"model_prep: {total_model_time:.2f}s, "
+                         f"cond: {total_cond_time:.2f}s, "
+                         f"uncond: {total_uncond_time:.2f}s, "
+                         f"scheduler: {total_scheduler_time:.2f}s")
 
             x0 = latents
             if offload_model:
@@ -622,14 +630,16 @@ class WanT2VW4A16:
                 self.high_noise_model.cpu()
                 torch.cuda.empty_cache()
                 t_offload_elapsed = time.time() - t_offload
-                logging.info(f"[TIMING] Model offload to CPU: {t_offload_elapsed:.3f}s")
-            
+                logging.info(
+                    f"[TIMING] Model offload to CPU: {t_offload_elapsed:.3f}s")
+
             # Timing: VAE decoding
             if self.rank == 0:
                 t_vae_decode = time.time()
                 videos = self.vae.decode(x0)
                 t_vae_decode_elapsed = time.time() - t_vae_decode
-                logging.info(f"[TIMING] VAE decode: {t_vae_decode_elapsed:.3f}s")
+                logging.info(
+                    f"[TIMING] VAE decode: {t_vae_decode_elapsed:.3f}s")
 
         del noise, latents
         del sample_scheduler
@@ -704,20 +714,23 @@ class WanI2VW4A16:
         from wan.distributed.fsdp import shard_model
         from functools import partial
         shard_fn = partial(shard_model, device_id=device_id)
-        
+
         # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
         from wan.modules.t5 import T5EncoderModel
         from wan.modules.vae2_1 import Wan2_1_VAE
-        
+
         # Timing: T5 loading
         t_start = time.time()
-        logging.info(f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
+        logging.info(
+            f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
-            checkpoint_path=os.path.join(original_ckpt_dir, config.t5_checkpoint),
-            tokenizer_path=os.path.join(original_ckpt_dir, config.t5_tokenizer),
+            checkpoint_path=os.path.join(
+                original_ckpt_dir, config.t5_checkpoint),
+            tokenizer_path=os.path.join(
+                original_ckpt_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
         t_t5 = time.time() - t_start
         logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
@@ -733,9 +746,10 @@ class WanI2VW4A16:
         logging.info(f"[TIMING] VAE model loading: {t_vae:.2f}s")
 
         # Load quantized DiT models from quantized_ckpt_dir
-        logging.info(f"Loading quantized DiT models from: {quantized_ckpt_dir}")
+        logging.info(
+            f"Loading quantized DiT models from: {quantized_ckpt_dir}")
         from wan.modules.quant_model import create_quantized_wan_model
-        
+
         # Timing: Low noise model loading
         t_start = time.time()
         self.low_noise_model = create_quantized_wan_model(
@@ -744,7 +758,7 @@ class WanI2VW4A16:
             subfolder=config.low_noise_checkpoint)
         t_low_load = time.time() - t_start
         logging.info(f"[TIMING] Low noise model loading: {t_low_load:.2f}s")
-        
+
         t_start = time.time()
         self.low_noise_model = self._configure_model(
             model=self.low_noise_model,
@@ -753,7 +767,8 @@ class WanI2VW4A16:
             shard_fn=shard_fn,
             convert_model_dtype=convert_model_dtype)
         t_low_config = time.time() - t_start
-        logging.info(f"[TIMING] Low noise model configuration: {t_low_config:.2f}s")
+        logging.info(
+            f"[TIMING] Low noise model configuration: {t_low_config:.2f}s")
 
         # Timing: High noise model loading
         t_start = time.time()
@@ -763,7 +778,7 @@ class WanI2VW4A16:
             subfolder=config.high_noise_checkpoint)
         t_high_load = time.time() - t_start
         logging.info(f"[TIMING] High noise model loading: {t_high_load:.2f}s")
-        
+
         t_start = time.time()
         self.high_noise_model = self._configure_model(
             model=self.high_noise_model,
@@ -772,10 +787,12 @@ class WanI2VW4A16:
             shard_fn=shard_fn,
             convert_model_dtype=convert_model_dtype)
         t_high_config = time.time() - t_start
-        logging.info(f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
-        
-        logging.info(f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
-        
+        logging.info(
+            f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
+
+        logging.info(
+            f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
+
         if use_sp:
             from wan.distributed.util import get_world_size
             self.sp_size = get_world_size()
@@ -834,7 +851,8 @@ class WanI2VW4A16:
                 getattr(self, required_model_name).to(self.device)
         t_elapsed = time.time() - t_start
         if t_elapsed > 0.1:  # Only log if it takes significant time
-            logging.info(f"[TIMING] Model switch ({required_model_name}): {t_elapsed:.3f}s")
+            logging.info(
+                f"[TIMING] Model switch ({required_model_name}): {t_elapsed:.3f}s")
         return getattr(self, required_model_name)
 
     def generate(self,
@@ -902,7 +920,7 @@ class WanI2VW4A16:
         msk = torch.concat([
             torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]
         ],
-                           dim=1)
+            dim=1)
         msk = msk.view(1, msk.shape[1] // 4, 4, lat_h, lat_w)
         msk = msk.transpose(1, 2)[0]
 
@@ -916,18 +934,20 @@ class WanI2VW4A16:
             self.text_encoder.model.to(self.device)
             t_move_elapsed = time.time() - t_move
             if t_move_elapsed > 0.1:
-                logging.info(f"[TIMING] T5 model move to GPU: {t_move_elapsed:.3f}s")
-            
+                logging.info(
+                    f"[TIMING] T5 model move to GPU: {t_move_elapsed:.3f}s")
+
             t_encode = time.time()
             context = self.text_encoder([input_prompt], self.device)
             t_encode_elapsed = time.time() - t_encode
             logging.info(f"[TIMING] T5 encode prompt: {t_encode_elapsed:.3f}s")
-            
+
             t_encode_null = time.time()
             context_null = self.text_encoder([n_prompt], self.device)
             t_encode_null_elapsed = time.time() - t_encode_null
-            logging.info(f"[TIMING] T5 encode negative prompt: {t_encode_null_elapsed:.3f}s")
-            
+            logging.info(
+                f"[TIMING] T5 encode negative prompt: {t_encode_null_elapsed:.3f}s")
+
             if offload_model:
                 self.text_encoder.model.cpu()
         else:
@@ -938,7 +958,7 @@ class WanI2VW4A16:
             context_null = [t.to(self.device) for t in context_null]
             t_encode_elapsed = time.time() - t_encode
             logging.info(f"[TIMING] T5 encode (CPU): {t_encode_elapsed:.3f}s")
-        
+
         t_t5_total = time.time() - t_start
         logging.info(f"[TIMING] T5 encoding total: {t_t5_total:.3f}s")
 
@@ -951,7 +971,7 @@ class WanI2VW4A16:
                         0, 1),
                 torch.zeros(3, F - 1, h, w)
             ],
-                         dim=1).to(self.device)
+                dim=1).to(self.device)
         ])[0]
         y = torch.concat([msk, y])
         t_vae_encode_elapsed = time.time() - t_vae_encode
@@ -1017,7 +1037,7 @@ class WanI2VW4A16:
             total_cond_time = 0.0
             total_uncond_time = 0.0
             total_scheduler_time = 0.0
-            
+
             for step_idx, t in enumerate(tqdm(timesteps, desc="Sampling")):
                 t_step_start = time.time()
                 latent_model_input = [latent.to(self.device)]
@@ -1030,10 +1050,10 @@ class WanI2VW4A16:
                     t, boundary, offload_model)
                 t_model_prep_elapsed = time.time() - t_model_prep
                 total_model_time += t_model_prep_elapsed
-                
+
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
-                
+
                 t_cond = time.time()
                 noise_pred_cond = model(
                     latent_model_input, t=timestep, **arg_c)[0]
@@ -1041,7 +1061,7 @@ class WanI2VW4A16:
                 total_cond_time += t_cond_elapsed
                 if offload_model:
                     torch.cuda.empty_cache()
-                
+
                 t_uncond = time.time()
                 noise_pred_uncond = model(
                     latent_model_input, t=timestep, **arg_null)[0]
@@ -1062,27 +1082,28 @@ class WanI2VW4A16:
                     generator=seed_g)[0]
                 t_scheduler_elapsed = time.time() - t_scheduler
                 total_scheduler_time += t_scheduler_elapsed
-                
+
                 latent = temp_x0.squeeze(0)
                 x0 = [latent]
                 del latent_model_input, timestep
-                
+
                 t_step_elapsed = time.time() - t_step_start
                 if step_idx % 10 == 0 or step_idx == len(timesteps) - 1:
                     logging.info(f"[TIMING] Step {step_idx}/{len(timesteps)-1}: "
-                               f"total={t_step_elapsed:.3f}s, "
-                               f"model_prep={t_model_prep_elapsed:.3f}s, "
-                               f"cond={t_cond_elapsed:.3f}s, "
-                               f"uncond={t_uncond_elapsed:.3f}s, "
-                               f"scheduler={t_scheduler_elapsed:.3f}s")
-            
+                                 f"total={t_step_elapsed:.3f}s, "
+                                 f"model_prep={t_model_prep_elapsed:.3f}s, "
+                                 f"cond={t_cond_elapsed:.3f}s, "
+                                 f"uncond={t_uncond_elapsed:.3f}s, "
+                                 f"scheduler={t_scheduler_elapsed:.3f}s")
+
             t_sampling_total = time.time() - t_sampling_start
-            logging.info(f"[TIMING] Sampling loop total: {t_sampling_total:.2f}s")
+            logging.info(
+                f"[TIMING] Sampling loop total: {t_sampling_total:.2f}s")
             logging.info(f"[TIMING] Sampling breakdown - "
-                       f"model_prep: {total_model_time:.2f}s, "
-                       f"cond: {total_cond_time:.2f}s, "
-                       f"uncond: {total_uncond_time:.2f}s, "
-                       f"scheduler: {total_scheduler_time:.2f}s")
+                         f"model_prep: {total_model_time:.2f}s, "
+                         f"cond: {total_cond_time:.2f}s, "
+                         f"uncond: {total_uncond_time:.2f}s, "
+                         f"scheduler: {total_scheduler_time:.2f}s")
 
             if offload_model:
                 t_offload = time.time()
@@ -1090,14 +1111,16 @@ class WanI2VW4A16:
                 self.high_noise_model.cpu()
                 torch.cuda.empty_cache()
                 t_offload_elapsed = time.time() - t_offload
-                logging.info(f"[TIMING] Model offload to CPU: {t_offload_elapsed:.3f}s")
-            
+                logging.info(
+                    f"[TIMING] Model offload to CPU: {t_offload_elapsed:.3f}s")
+
             # Timing: VAE decoding
             if self.rank == 0:
                 t_vae_decode = time.time()
                 videos = self.vae.decode(x0)
                 t_vae_decode_elapsed = time.time() - t_vae_decode
-                logging.info(f"[TIMING] VAE decode: {t_vae_decode_elapsed:.3f}s")
+                logging.info(
+                    f"[TIMING] VAE decode: {t_vae_decode_elapsed:.3f}s")
 
         del noise, latent, x0
         del sample_scheduler
@@ -1216,15 +1239,19 @@ def generate(args):
             convert_model_dtype=args.convert_model_dtype,
         )
         t_init_total = time.time() - t_init_start
-        logging.info(f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
+        logging.info(
+            f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
 
         if args.enable_hooks and rank == 0:
             from wan.utils.hook_utils import FSDPRuntimeDumper
             dumper = FSDPRuntimeDumper()
-            dumper.register_hooks(wan_t2v.text_encoder.model, prefix="t5_encoder")
+            dumper.register_hooks(
+                wan_t2v.text_encoder.model, prefix="t5_encoder")
             dumper.register_hooks(wan_t2v.vae.model, prefix="vae")
-            dumper.register_hooks(wan_t2v.high_noise_model, prefix="high_noise_model")
-            dumper.register_hooks(wan_t2v.low_noise_model, prefix="low_noise_model")
+            dumper.register_hooks(wan_t2v.high_noise_model,
+                                  prefix="high_noise_model")
+            dumper.register_hooks(wan_t2v.low_noise_model,
+                                  prefix="low_noise_model")
 
         # Timing: Video generation
         t_gen_start = time.time()
@@ -1258,15 +1285,19 @@ def generate(args):
             convert_model_dtype=args.convert_model_dtype,
         )
         t_init_total = time.time() - t_init_start
-        logging.info(f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
+        logging.info(
+            f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
 
         if args.enable_hooks and rank == 0:
             from wan.utils.hook_utils import FSDPRuntimeDumper
             dumper = FSDPRuntimeDumper()
-            dumper.register_hooks(wan_i2v.text_encoder.model, prefix="t5_encoder")
+            dumper.register_hooks(
+                wan_i2v.text_encoder.model, prefix="t5_encoder")
             dumper.register_hooks(wan_i2v.vae.model, prefix="vae")
-            dumper.register_hooks(wan_i2v.high_noise_model, prefix="high_noise_model")
-            dumper.register_hooks(wan_i2v.low_noise_model, prefix="low_noise_model")
+            dumper.register_hooks(wan_i2v.high_noise_model,
+                                  prefix="high_noise_model")
+            dumper.register_hooks(wan_i2v.low_noise_model,
+                                  prefix="low_noise_model")
 
         # Timing: Video generation
         t_gen_start = time.time()
@@ -1285,7 +1316,8 @@ def generate(args):
         t_gen_total = time.time() - t_gen_start
         logging.info(f"[TIMING] Video generation total: {t_gen_total:.2f}s")
     else:
-        raise NotImplementedError(f"Task {args.task} is not yet supported in W4A16 mode.")
+        raise NotImplementedError(
+            f"Task {args.task} is not yet supported in W4A16 mode.")
 
     if rank == 0:
         if args.save_file is None:
