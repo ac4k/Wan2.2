@@ -27,6 +27,12 @@ EXAMPLE_PROMPT = {
         "prompt":
             "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.",
     },
+    "i2v-A14B": {
+        "prompt":
+            "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+        "image":
+            "examples/i2v_input.JPG",
+    },
 }
 
 
@@ -39,6 +45,11 @@ def _validate_args(args):
 
     if args.prompt is None:
         args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
+    if args.image is None and "image" in EXAMPLE_PROMPT[args.task]:
+        args.image = EXAMPLE_PROMPT[args.task]["image"]
+
+    if args.task == "i2v-A14B":
+        assert args.image is not None, "Please specify the image path for i2v."
 
     cfg = WAN_CONFIGS[args.task]
 
@@ -134,6 +145,11 @@ def _parse_args():
         default=None,
         help="The prompt to generate the video from.")
     parser.add_argument(
+        "--image",
+        type=str,
+        default=None,
+        help="The image to generate the video from.")
+    parser.add_argument(
         "--use_prompt_extend",
         action="store_true",
         default=False,
@@ -227,7 +243,7 @@ class WanT2VW4A16:
         init_on_cpu=True,
         convert_model_dtype=False,
     ):
-        r"""
+        """
         Initializes the Wan text-to-video generation model components with W4A16 quantization.
 
         Args:
@@ -272,7 +288,7 @@ class WanT2VW4A16:
         # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
         from wan.modules.t5 import T5EncoderModel
         from wan.modules.vae2_1 import Wan2_1_VAE
-        
+
         # Timing: T5 loading
         t_start = time.time()
         logging.info(f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
@@ -308,7 +324,7 @@ class WanT2VW4A16:
             subfolder=config.low_noise_checkpoint)
         t_low_load = time.time() - t_start
         logging.info(f"[TIMING] Low noise model loading: {t_low_load:.2f}s")
-        
+
         t_start = time.time()
         self.low_noise_model = self._configure_model(
             model=self.low_noise_model,
@@ -327,7 +343,7 @@ class WanT2VW4A16:
             subfolder=config.high_noise_checkpoint)
         t_high_load = time.time() - t_start
         logging.info(f"[TIMING] High noise model loading: {t_high_load:.2f}s")
-        
+
         t_start = time.time()
         self.high_noise_model = self._configure_model(
             model=self.high_noise_model,
@@ -339,7 +355,7 @@ class WanT2VW4A16:
         logging.info(f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
         
         logging.info(f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
-        
+
         if use_sp:
             from wan.distributed.util import get_world_size
             self.sp_size = get_world_size()
@@ -627,6 +643,474 @@ class WanT2VW4A16:
         return videos[0] if self.rank == 0 else None
 
 
+class WanI2VW4A16:
+    """
+    WanI2V with W4A16 quantization support.
+    T5 and VAE use original data types, DiT models use W4A16.
+    """
+
+    def __init__(
+        self,
+        config,
+        original_ckpt_dir,
+        quantized_ckpt_dir,
+        device_id=0,
+        rank=0,
+        t5_fsdp=False,
+        dit_fsdp=False,
+        use_sp=False,
+        t5_cpu=False,
+        init_on_cpu=True,
+        convert_model_dtype=False,
+    ):
+        r"""
+        Initializes the Wan image-to-video generation model components with W4A16 quantization.
+
+        Args:
+            config (EasyDict):
+                Object containing model parameters initialized from config.py
+            original_ckpt_dir (`str`):
+                Path to directory containing original T5 and VAE model checkpoints
+            quantized_ckpt_dir (`str`):
+                Path to directory containing quantized DiT model checkpoints (low_noise and high_noise)
+            device_id (`int`,  *optional*, defaults to 0):
+                Id of target GPU device
+            rank (`int`,  *optional*, defaults to 0):
+                Process rank for distributed training
+            t5_fsdp (`bool`, *optional*, defaults to False):
+                Enable FSDP sharding for T5 model
+            dit_fsdp (`bool`, *optional*, defaults to False):
+                Enable FSDP sharding for DiT model
+            use_sp (`bool`, *optional*, defaults to False):
+                Enable distribution strategy of sequence parallel.
+            t5_cpu (`bool`, *optional*, defaults to False):
+                Whether to place T5 model on CPU. Only works without t5_fsdp.
+            init_on_cpu (`bool`, *optional*, defaults to True):
+                Enable initializing Transformer Model on CPU. Only works without FSDP or USP.
+        """
+        self.device = torch.device(f"cuda:{device_id}")
+        self.config = config
+        self.rank = rank
+        self.t5_cpu = t5_cpu
+        self.init_on_cpu = init_on_cpu
+
+        self.num_train_timesteps = config.num_train_timesteps
+        self.boundary = config.boundary
+        self.param_dtype = config.param_dtype
+
+        if t5_fsdp or dit_fsdp or use_sp:
+            self.init_on_cpu = False
+
+        from wan.distributed.fsdp import shard_model
+        from functools import partial
+        shard_fn = partial(shard_model, device_id=device_id)
+        
+        # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
+        from wan.modules.t5 import T5EncoderModel
+        from wan.modules.vae2_1 import Wan2_1_VAE
+        
+        # Timing: T5 loading
+        t_start = time.time()
+        logging.info(f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
+        self.text_encoder = T5EncoderModel(
+            text_len=config.text_len,
+            dtype=config.t5_dtype,
+            device=torch.device('cpu'),
+            checkpoint_path=os.path.join(original_ckpt_dir, config.t5_checkpoint),
+            tokenizer_path=os.path.join(original_ckpt_dir, config.t5_tokenizer),
+            shard_fn=shard_fn if t5_fsdp else None)
+        t_t5 = time.time() - t_start
+        logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
+
+        # Timing: VAE loading
+        t_start = time.time()
+        self.vae_stride = config.vae_stride
+        self.patch_size = config.patch_size
+        self.vae = Wan2_1_VAE(
+            vae_pth=os.path.join(original_ckpt_dir, config.vae_checkpoint),
+            device=self.device)
+        t_vae = time.time() - t_start
+        logging.info(f"[TIMING] VAE model loading: {t_vae:.2f}s")
+
+        # Load quantized DiT models from quantized_ckpt_dir
+        logging.info(f"Loading quantized DiT models from: {quantized_ckpt_dir}")
+        from wan.modules.quant_model import create_quantized_wan_model
+        
+        # Timing: Low noise model loading
+        t_start = time.time()
+        self.low_noise_model = create_quantized_wan_model(
+            quantized_ckpt_dir=quantized_ckpt_dir,
+            original_ckpt_dir=original_ckpt_dir,
+            subfolder=config.low_noise_checkpoint)
+        t_low_load = time.time() - t_start
+        logging.info(f"[TIMING] Low noise model loading: {t_low_load:.2f}s")
+        
+        t_start = time.time()
+        self.low_noise_model = self._configure_model(
+            model=self.low_noise_model,
+            use_sp=use_sp,
+            dit_fsdp=dit_fsdp,
+            shard_fn=shard_fn,
+            convert_model_dtype=convert_model_dtype)
+        t_low_config = time.time() - t_start
+        logging.info(f"[TIMING] Low noise model configuration: {t_low_config:.2f}s")
+
+        # Timing: High noise model loading
+        t_start = time.time()
+        self.high_noise_model = create_quantized_wan_model(
+            quantized_ckpt_dir=quantized_ckpt_dir,
+            original_ckpt_dir=original_ckpt_dir,
+            subfolder=config.high_noise_checkpoint)
+        t_high_load = time.time() - t_start
+        logging.info(f"[TIMING] High noise model loading: {t_high_load:.2f}s")
+        
+        t_start = time.time()
+        self.high_noise_model = self._configure_model(
+            model=self.high_noise_model,
+            use_sp=use_sp,
+            dit_fsdp=dit_fsdp,
+            shard_fn=shard_fn,
+            convert_model_dtype=convert_model_dtype)
+        t_high_config = time.time() - t_start
+        logging.info(f"[TIMING] High noise model configuration: {t_high_config:.2f}s")
+        
+        logging.info(f"[TIMING] Total model initialization: {t_t5 + t_vae + t_low_load + t_low_config + t_high_load + t_high_config:.2f}s")
+        
+        if use_sp:
+            from wan.distributed.util import get_world_size
+            self.sp_size = get_world_size()
+        else:
+            self.sp_size = 1
+
+        self.sample_neg_prompt = config.sample_neg_prompt
+
+    def _configure_model(self, model, use_sp, dit_fsdp, shard_fn, convert_model_dtype=False):
+        """
+        Configures a model object. This includes setting evaluation modes,
+        applying distributed parallel strategy, and handling device placement.
+        """
+        model.eval().requires_grad_(False)
+
+        if use_sp:
+            import types
+            from wan.distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
+            for block in model.blocks:
+                block.self_attn.forward = types.MethodType(
+                    sp_attn_forward, block.self_attn)
+            model.forward = types.MethodType(sp_dit_forward, model)
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        if dit_fsdp:
+            model = shard_fn(model)
+        else:
+            if convert_model_dtype:
+                model.to(self.param_dtype)
+            if not self.init_on_cpu:
+                model.to(self.device)
+
+        return model
+
+    def _prepare_model_for_timestep(self, t, boundary, offload_model):
+        r"""
+        Prepares and returns the required model for the current timestep.
+        """
+        t_start = time.time()
+        if t.item() >= boundary:
+            required_model_name = 'high_noise_model'
+            offload_model_name = 'low_noise_model'
+        else:
+            required_model_name = 'low_noise_model'
+            offload_model_name = 'high_noise_model'
+        if offload_model or self.init_on_cpu:
+            if next(getattr(
+                    self,
+                    offload_model_name).parameters()).device.type == 'cuda':
+                getattr(self, offload_model_name).to('cpu')
+            if next(getattr(
+                    self,
+                    required_model_name).parameters()).device.type == 'cpu':
+                getattr(self, required_model_name).to(self.device)
+        t_elapsed = time.time() - t_start
+        if t_elapsed > 0.1:  # Only log if it takes significant time
+            logging.info(f"[TIMING] Model switch ({required_model_name}): {t_elapsed:.3f}s")
+        return getattr(self, required_model_name)
+
+    def generate(self,
+                 input_prompt,
+                 img,
+                 max_area=720 * 1280,
+                 frame_num=81,
+                 shift=5.0,
+                 sample_solver='unipc',
+                 sampling_steps=40,
+                 guide_scale=5.0,
+                 n_prompt="",
+                 seed=-1,
+                 offload_model=True):
+        """
+        Generates video frames from input image and text prompt using diffusion process with W4A16 quantization.
+        """
+        import math
+        import numpy as np
+        from contextlib import contextmanager
+        from tqdm import tqdm
+        import torchvision.transforms.functional as TF
+        from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+        from wan.utils.fm_solvers import (
+            FlowDPMSolverMultistepScheduler,
+            get_sampling_sigmas,
+            retrieve_timesteps,
+        )
+
+        # preprocess
+        guide_scale = (guide_scale, guide_scale) if isinstance(
+            guide_scale, float) else guide_scale
+        img = TF.to_tensor(img).sub_(0.5).div_(0.5).to(self.device)
+
+        F = frame_num
+        h, w = img.shape[1:]
+        aspect_ratio = h / w
+        lat_h = round(
+            np.sqrt(max_area * aspect_ratio) // self.vae_stride[1] //
+            self.patch_size[1] * self.patch_size[1])
+        lat_w = round(
+            np.sqrt(max_area / aspect_ratio) // self.vae_stride[2] //
+            self.patch_size[2] * self.patch_size[2])
+        h = lat_h * self.vae_stride[1]
+        w = lat_w * self.vae_stride[2]
+
+        max_seq_len = ((F - 1) // self.vae_stride[0] + 1) * lat_h * lat_w // (
+            self.patch_size[1] * self.patch_size[2])
+        max_seq_len = int(math.ceil(max_seq_len / self.sp_size)) * self.sp_size
+
+        seed = seed if seed >= 0 else random.randint(0, sys.maxsize)
+        seed_g = torch.Generator(device=self.device)
+        seed_g.manual_seed(seed)
+        noise = torch.randn(
+            16,
+            (F - 1) // self.vae_stride[0] + 1,
+            lat_h,
+            lat_w,
+            dtype=torch.float32,
+            generator=seed_g,
+            device=self.device)
+
+        msk = torch.ones(1, F, lat_h, lat_w, device=self.device)
+        msk[:, 1:] = 0
+        msk = torch.concat([
+            torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]
+        ],
+                           dim=1)
+        msk = msk.view(1, msk.shape[1] // 4, 4, lat_h, lat_w)
+        msk = msk.transpose(1, 2)[0]
+
+        if n_prompt == "":
+            n_prompt = self.sample_neg_prompt
+
+        # Timing: T5 encoding
+        t_start = time.time()
+        if not self.t5_cpu:
+            t_move = time.time()
+            self.text_encoder.model.to(self.device)
+            t_move_elapsed = time.time() - t_move
+            if t_move_elapsed > 0.1:
+                logging.info(f"[TIMING] T5 model move to GPU: {t_move_elapsed:.3f}s")
+            
+            t_encode = time.time()
+            context = self.text_encoder([input_prompt], self.device)
+            t_encode_elapsed = time.time() - t_encode
+            logging.info(f"[TIMING] T5 encode prompt: {t_encode_elapsed:.3f}s")
+            
+            t_encode_null = time.time()
+            context_null = self.text_encoder([n_prompt], self.device)
+            t_encode_null_elapsed = time.time() - t_encode_null
+            logging.info(f"[TIMING] T5 encode negative prompt: {t_encode_null_elapsed:.3f}s")
+            
+            if offload_model:
+                self.text_encoder.model.cpu()
+        else:
+            t_encode = time.time()
+            context = self.text_encoder([input_prompt], torch.device('cpu'))
+            context_null = self.text_encoder([n_prompt], torch.device('cpu'))
+            context = [t.to(self.device) for t in context]
+            context_null = [t.to(self.device) for t in context_null]
+            t_encode_elapsed = time.time() - t_encode
+            logging.info(f"[TIMING] T5 encode (CPU): {t_encode_elapsed:.3f}s")
+        
+        t_t5_total = time.time() - t_start
+        logging.info(f"[TIMING] T5 encoding total: {t_t5_total:.3f}s")
+
+        # Timing: VAE encoding
+        t_vae_encode = time.time()
+        y = self.vae.encode([
+            torch.concat([
+                torch.nn.functional.interpolate(
+                    img[None].cpu(), size=(h, w), mode='bicubic').transpose(
+                        0, 1),
+                torch.zeros(3, F - 1, h, w)
+            ],
+                         dim=1).to(self.device)
+        ])[0]
+        y = torch.concat([msk, y])
+        t_vae_encode_elapsed = time.time() - t_vae_encode
+        logging.info(f"[TIMING] VAE encode: {t_vae_encode_elapsed:.3f}s")
+
+        @contextmanager
+        def noop_no_sync():
+            yield
+
+        no_sync_low_noise = getattr(self.low_noise_model, 'no_sync',
+                                    noop_no_sync)
+        no_sync_high_noise = getattr(self.high_noise_model, 'no_sync',
+                                     noop_no_sync)
+
+        # evaluation mode
+        with (
+                torch.amp.autocast('cuda', dtype=self.param_dtype),
+                torch.no_grad(),
+                no_sync_low_noise(),
+                no_sync_high_noise(),
+        ):
+            boundary = self.boundary * self.num_train_timesteps
+
+            if sample_solver == 'unipc':
+                sample_scheduler = FlowUniPCMultistepScheduler(
+                    num_train_timesteps=self.num_train_timesteps,
+                    shift=1,
+                    use_dynamic_shifting=False)
+                sample_scheduler.set_timesteps(
+                    sampling_steps, device=self.device, shift=shift)
+                timesteps = sample_scheduler.timesteps
+            elif sample_solver == 'dpm++':
+                sample_scheduler = FlowDPMSolverMultistepScheduler(
+                    num_train_timesteps=self.num_train_timesteps,
+                    shift=1,
+                    use_dynamic_shifting=False)
+                sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+                timesteps, _ = retrieve_timesteps(
+                    sample_scheduler,
+                    device=self.device,
+                    sigmas=sampling_sigmas)
+            else:
+                raise NotImplementedError("Unsupported solver.")
+
+            # sample videos
+            latent = noise
+
+            arg_c = {
+                'context': [context[0]],
+                'seq_len': max_seq_len,
+                'y': [y],
+            }
+
+            arg_null = {
+                'context': context_null,
+                'seq_len': max_seq_len,
+                'y': [y],
+            }
+
+            # Timing: Sampling loop
+            t_sampling_start = time.time()
+            total_model_time = 0.0
+            total_cond_time = 0.0
+            total_uncond_time = 0.0
+            total_scheduler_time = 0.0
+            
+            for step_idx, t in enumerate(tqdm(timesteps, desc="Sampling")):
+                t_step_start = time.time()
+                latent_model_input = [latent.to(self.device)]
+                timestep = [t]
+
+                timestep = torch.stack(timestep).to(self.device)
+
+                t_model_prep = time.time()
+                model = self._prepare_model_for_timestep(
+                    t, boundary, offload_model)
+                t_model_prep_elapsed = time.time() - t_model_prep
+                total_model_time += t_model_prep_elapsed
+                
+                sample_guide_scale = guide_scale[1] if t.item(
+                ) >= boundary else guide_scale[0]
+                
+                t_cond = time.time()
+                noise_pred_cond = model(
+                    latent_model_input, t=timestep, **arg_c)[0]
+                t_cond_elapsed = time.time() - t_cond
+                total_cond_time += t_cond_elapsed
+                if offload_model:
+                    torch.cuda.empty_cache()
+                
+                t_uncond = time.time()
+                noise_pred_uncond = model(
+                    latent_model_input, t=timestep, **arg_null)[0]
+                t_uncond_elapsed = time.time() - t_uncond
+                total_uncond_time += t_uncond_elapsed
+                if offload_model:
+                    torch.cuda.empty_cache()
+
+                noise_pred = noise_pred_uncond + sample_guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
+
+                t_scheduler = time.time()
+                temp_x0 = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    t,
+                    latent.unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g)[0]
+                t_scheduler_elapsed = time.time() - t_scheduler
+                total_scheduler_time += t_scheduler_elapsed
+                
+                latent = temp_x0.squeeze(0)
+                x0 = [latent]
+                del latent_model_input, timestep
+                
+                t_step_elapsed = time.time() - t_step_start
+                if step_idx % 10 == 0 or step_idx == len(timesteps) - 1:
+                    logging.info(f"[TIMING] Step {step_idx}/{len(timesteps)-1}: "
+                               f"total={t_step_elapsed:.3f}s, "
+                               f"model_prep={t_model_prep_elapsed:.3f}s, "
+                               f"cond={t_cond_elapsed:.3f}s, "
+                               f"uncond={t_uncond_elapsed:.3f}s, "
+                               f"scheduler={t_scheduler_elapsed:.3f}s")
+            
+            t_sampling_total = time.time() - t_sampling_start
+            logging.info(f"[TIMING] Sampling loop total: {t_sampling_total:.2f}s")
+            logging.info(f"[TIMING] Sampling breakdown - "
+                       f"model_prep: {total_model_time:.2f}s, "
+                       f"cond: {total_cond_time:.2f}s, "
+                       f"uncond: {total_uncond_time:.2f}s, "
+                       f"scheduler: {total_scheduler_time:.2f}s")
+
+            if offload_model:
+                t_offload = time.time()
+                self.low_noise_model.cpu()
+                self.high_noise_model.cpu()
+                torch.cuda.empty_cache()
+                t_offload_elapsed = time.time() - t_offload
+                logging.info(f"[TIMING] Model offload to CPU: {t_offload_elapsed:.3f}s")
+            
+            # Timing: VAE decoding
+            if self.rank == 0:
+                t_vae_decode = time.time()
+                videos = self.vae.decode(x0)
+                t_vae_decode_elapsed = time.time() - t_vae_decode
+                logging.info(f"[TIMING] VAE decode: {t_vae_decode_elapsed:.3f}s")
+
+        del noise, latent, x0
+        del sample_scheduler
+        if offload_model:
+            import gc
+            gc.collect()
+            torch.cuda.synchronize()
+        if dist.is_initialized():
+            dist.barrier()
+
+        return videos[0] if self.rank == 0 else None
+
+
 def generate(args):
     rank = int(os.getenv("RANK", 0))
     world_size = int(os.getenv("WORLD_SIZE", 1))
@@ -662,12 +1146,12 @@ def generate(args):
             prompt_expander = DashScopePromptExpander(
                 model_name=args.prompt_extend_model,
                 task=args.task,
-                is_vl=False)
+                is_vl=args.image is not None)
         elif args.prompt_extend_method == "local_qwen":
             prompt_expander = QwenPromptExpander(
                 model_name=args.prompt_extend_model,
                 task=args.task,
-                is_vl=False,
+                is_vl=args.image is not None,
                 device=rank)
         else:
             raise NotImplementedError(
@@ -686,6 +1170,10 @@ def generate(args):
         args.base_seed = base_seed[0]
 
     logging.info(f"Input prompt: {args.prompt}")
+    img = None
+    if args.image is not None:
+        img = Image.open(args.image).convert("RGB")
+        logging.info(f"Input image: {args.image}")
 
     # prompt extend
     if args.use_prompt_extend:
@@ -693,7 +1181,7 @@ def generate(args):
         if rank == 0:
             prompt_output = prompt_expander(
                 args.prompt,
-                image=None,
+                image=img,
                 tar_lang=args.prompt_extend_target_lang,
                 seed=args.base_seed)
             if prompt_output.status == False:
@@ -753,6 +1241,49 @@ def generate(args):
             offload_model=args.offload_model)
         t_gen_total = time.time() - t_gen_start
         logging.info(f"[TIMING] Video generation total: {t_gen_total:.2f}s")
+    elif "i2v" in args.task:
+        # Timing: Pipeline initialization
+        t_init_start = time.time()
+        logging.info("Creating WanI2V pipeline with W4A16 quantization.")
+        wan_i2v = WanI2VW4A16(
+            config=cfg,
+            original_ckpt_dir=args.original_ckpt_dir,
+            quantized_ckpt_dir=args.quantized_ckpt_dir,
+            device_id=device,
+            rank=rank,
+            t5_fsdp=args.t5_fsdp,
+            dit_fsdp=args.dit_fsdp,
+            use_sp=(args.ulysses_size > 1),
+            t5_cpu=args.t5_cpu,
+            convert_model_dtype=args.convert_model_dtype,
+        )
+        t_init_total = time.time() - t_init_start
+        logging.info(f"[TIMING] Pipeline initialization total: {t_init_total:.2f}s")
+
+        if args.enable_hooks and rank == 0:
+            from wan.utils.hook_utils import FSDPRuntimeDumper
+            dumper = FSDPRuntimeDumper()
+            dumper.register_hooks(wan_i2v.text_encoder.model, prefix="t5_encoder")
+            dumper.register_hooks(wan_i2v.vae.model, prefix="vae")
+            dumper.register_hooks(wan_i2v.high_noise_model, prefix="high_noise_model")
+            dumper.register_hooks(wan_i2v.low_noise_model, prefix="low_noise_model")
+
+        # Timing: Video generation
+        t_gen_start = time.time()
+        logging.info(f"Generating video ...")
+        video = wan_i2v.generate(
+            args.prompt,
+            img,
+            max_area=MAX_AREA_CONFIGS[args.size],
+            frame_num=args.frame_num,
+            shift=args.sample_shift,
+            sample_solver=args.sample_solver,
+            sampling_steps=args.sample_steps,
+            guide_scale=args.sample_guide_scale,
+            seed=args.base_seed,
+            offload_model=args.offload_model)
+        t_gen_total = time.time() - t_gen_start
+        logging.info(f"[TIMING] Video generation total: {t_gen_total:.2f}s")
     else:
         raise NotImplementedError(f"Task {args.task} is not yet supported in W4A16 mode.")
 
@@ -762,7 +1293,8 @@ def generate(args):
             formatted_prompt = args.prompt.replace(" ", "_").replace("/",
                                                                      "_")[:50]
             suffix = '.mp4'
-            args.save_file = f"{args.task}_w4a16_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{formatted_prompt}_{formatted_time}" + suffix
+            task_suffix = "_w4a16" if "w4a16" not in args.task else ""
+            args.save_file = f"{args.task}{task_suffix}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{formatted_prompt}_{formatted_time}" + suffix
 
         logging.info(f"Saving generated video to {args.save_file}")
         save_video(
