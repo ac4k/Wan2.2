@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.so
+*.pyd
+__pycache__/
+*.pyc
+*.pyo
+
+# CUDA compilation
+*.o
+*.a
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+*.egg
+.pytest_cache/
+

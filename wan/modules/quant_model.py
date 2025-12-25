@@ -91,8 +91,70 @@ def replace_linear_with_quantized(model, weight_dict):
         model.head.head = quant_linear
 
 
+def convert_scale_into_swizzle(scales_linear: torch.Tensor, m: int, k: int, block_size: int = 16, num_cols: int = None):
+    # Calculate rounded dimensions
+    rounded_m = ((m + 128 - 1) // 128) * 128
+    rounded_k = ((k + 4 - 1) // 4) * 4
+
+    # Calculate num_cols if not provided
+    if num_cols is None:
+        num_cols = k * block_size
+
+    # Pad scales_linear to rounded dimensions
+    scales_padded = torch.zeros(
+        rounded_m, rounded_k, dtype=scales_linear.dtype, device=scales_linear.device)
+    scales_padded[:m, :k] = scales_linear
+
+    # Calculate tile dimensions
+    # IMPORTANT: Swizzled layout uses numCols (original column count) to calculate numKTiles
+    # NOT k (scales count) to calculate k_tiles
+    m_tiles = rounded_m // 128
+    f = block_size * 4  # 64
+    numKTiles = (num_cols + f - 1) // f  # Based on numCols, not k!
+    k_tiles = (rounded_k + f - 1) // f  # Used for processing chunks
+
+    # Swizzled layout structure: [numMTiles=40, numKTiles=80, 32, 4, 4]
+    # We need to organize all k=320 scales into this structure
+
+    # Process all k scales: organize them into swizzled layout
+    # Reshape linear scales to [m_tiles, 128, k]
+    scales_reshaped = scales_padded.reshape(m_tiles, 128, rounded_k)
+
+    # First, reshape to [m_tiles, 4, 32, rounded_k]
+    scales_reshaped = scales_reshaped.reshape(m_tiles, 4, 32, rounded_k)
+
+    # Reshape rounded_k to [numKTiles, 4]
+    scales_reshaped = scales_reshaped.reshape(m_tiles, 4, 32, numKTiles, 4)
+
+    # Permute to [m_tiles, numKTiles, 32, 4, 4] (swizzled layout structure)
+    scales_swizzled = scales_reshaped.permute(0, 3, 2, 1, 4)
+
+    # Reshape to [rounded_m, rounded_k] (unpacked)
+    scales_swizzled = scales_swizzled.reshape(rounded_m, rounded_k)
+
+    # Pack 4 scales per int32: [rounded_m, rounded_k] -> [rounded_m, rounded_k//4]
+    scales_swizzled_uint8 = scales_swizzled.view(torch.uint8)
+    scales_swizzled_packed = scales_swizzled_uint8.reshape(
+        rounded_m * rounded_k // 4, 4).contiguous().view(torch.int32).reshape(rounded_m, rounded_k // 4)
+
+    # Return as float8_e4m3fn view
+    # scales_swizzled_packed is int32 with shape [rounded_m, rounded_k//4] = [5120, 80]
+    # Each int32 contains 4 float8_e4m3fn values (packed as uint8)
+    # When view as float8_e4m3fn, we need to unpack first
+    scales_swizzled_packed_uint8 = scales_swizzled_packed.view(
+        torch.uint8)  # [5120, 320] uint8
+    result = scales_swizzled_packed_uint8.view(
+        torch.float8_e4m3fn)  # [5120, 320] float8_e4m3fn
+    # Verify shape is correct: should be [rounded_m, rounded_k] = [5120, 320]
+    expected_shape = (rounded_m, rounded_k)
+    assert result.shape == expected_shape, \
+        f"Expected shape {expected_shape}, got {result.shape}"
+    return result
+
+
 def _create_quantized_linear(original_linear, weight_key, weight_dict):
     out_features = original_linear.out_features
+    in_features = original_linear.in_features
     bias = original_linear.bias is not None
 
     # Check if quantized weights exist
@@ -105,8 +167,19 @@ def _create_quantized_linear(original_linear, weight_key, weight_dict):
     quant_linear = QuantizedLinear(out_features, bias=bias)
 
     weight_fp4 = weight_dict[weight_key]  # uint8, packed fp4
-    weight_scale = weight_dict[weight_scale_key]  # float8_e4m3fn, swizzled
+
+    weight_scale = weight_dict[weight_scale_key]
     weight_global_scale = weight_dict[weight_global_scale_key]  # float32
+
+    # Convert scales from linear layout to swizzled layout
+    # weight_scale shape: [out_features, in_features//16] (linear layout)
+    # Need to convert to swizzled layout expected by QuantizedLinear
+    m, k = weight_scale.shape  # m = out_features, k = in_features // 16
+
+    # TODO: change to swizzled layout after using linear layout in weight scale
+    weight_scale_swizzled = weight_scale
+    # weight_scale_swizzled = convert_scale_into_swizzle(
+    #     weight_scale, m, k, num_cols=in_features)
 
     # Get bias if exists
     bias_tensor = None
@@ -116,7 +189,7 @@ def _create_quantized_linear(original_linear, weight_key, weight_dict):
             bias_tensor = weight_dict[bias_key]
 
     quant_linear.load_quantized_weights(
-        weight_fp4, weight_scale, weight_global_scale, bias_tensor)
+        weight_fp4, weight_scale_swizzled, weight_global_scale, bias_tensor)
 
     return quant_linear
 
