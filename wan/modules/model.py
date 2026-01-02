@@ -6,7 +6,7 @@ import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 import os
-from sageattention import sageattn
+from ac4k_kernel.ops import attention
 from .attention import flash_attention
 
 __all__ = ['WanModel']
@@ -142,11 +142,10 @@ class WanSelfAttention(nn.Module):
             return q, k, v
 
         q, k, v = qkv_fn(x)
-        if os.getenv("USE_SAGEATTN") == "1":
-            x = sageattn(rope_apply(q, grid_sizes, freqs, data_type=torch.float16),
-                rope_apply(k, grid_sizes, freqs, data_type=torch.float16),
-                v.to(torch.float16), tensor_layout="NHD",
-                is_causal=False).to(torch.bfloat16)
+        if os.getenv("USE_AC4K_ATTN") == "1":
+            x = attention(rope_apply(q, grid_sizes, freqs),
+                rope_apply(k, grid_sizes, freqs),
+                v, layout="BNHD", precision="int8+fp8e4m3")
         else:
             x = flash_attention(
                 q=rope_apply(q, grid_sizes, freqs),
@@ -178,9 +177,9 @@ class WanCrossAttention(WanSelfAttention):
         v = self.v(context).view(b, -1, n, d)
 
         # compute attention
-        if os.getenv("USE_SAGEATTN") == "1":
-            x = sageattn(q.to(torch.float16), k.to(torch.float16), v.to(torch.float16),
-                        tensor_layout="NHD", is_causal=False).to(torch.bfloat16)
+        if os.getenv("USE_AC4K_ATTN") == "1":
+            x = attention(q, k, v,
+                        layout="BNHD", precision="int8+fp8e4m3")
         else:
             x = flash_attention(q, k, v, k_lens=context_lens)
 

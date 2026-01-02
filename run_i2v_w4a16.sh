@@ -1,4 +1,4 @@
-export USE_SAGEATTN=1
+export USE_AC4K_ATTN=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 python3 generate_w4a16.py  --task i2v-A14B \
   --size 1280*720 \

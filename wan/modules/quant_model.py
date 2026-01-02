@@ -56,7 +56,7 @@ def replace_linear_with_quantized(model, weight_dict):
         if quant_linear2 is not None:
             block.ffn[2] = quant_linear2
 
-    # Replace text embedding Linear layers
+    # maybe replace text embedding Linear layers
     for i, layer in enumerate(model.text_embedding):
         if isinstance(layer, nn.Linear):
             weight_key = f"text_embedding.{i}.weight"
@@ -65,7 +65,7 @@ def replace_linear_with_quantized(model, weight_dict):
             if quant_linear is not None:
                 model.text_embedding[i] = quant_linear
 
-    # Replace time embedding Linear layers
+    # maybe time embedding Linear layers
     for i, layer in enumerate(model.time_embedding):
         if isinstance(layer, nn.Linear):
             weight_key = f"time_embedding.{i}.weight"
@@ -74,7 +74,7 @@ def replace_linear_with_quantized(model, weight_dict):
             if quant_linear is not None:
                 model.time_embedding[i] = quant_linear
 
-    # Replace time projection Linear layer
+    # maybe time projection Linear layer
     time_proj_linear = model.time_projection[1]
     weight_key = "time_projection.1.weight"
     quant_linear = _create_quantized_linear(
@@ -82,7 +82,7 @@ def replace_linear_with_quantized(model, weight_dict):
     if quant_linear is not None:
         model.time_projection[1] = quant_linear
 
-    # Replace head Linear layer
+    # maybe Replace head Linear layer
     head_linear = model.head.head
     weight_key = "head.head.weight"
     quant_linear = _create_quantized_linear(
@@ -92,26 +92,22 @@ def replace_linear_with_quantized(model, weight_dict):
 
 
 def convert_scale_into_swizzle(scales_linear: torch.Tensor, m: int, k: int, block_size: int = 16, num_cols: int = None):
-    # Calculate rounded dimensions
     rounded_m = ((m + 128 - 1) // 128) * 128
     rounded_k = ((k + 4 - 1) // 4) * 4
 
-    # Calculate num_cols if not provided
     if num_cols is None:
         num_cols = k * block_size
 
-    # Pad scales_linear to rounded dimensions
     scales_padded = torch.zeros(
         rounded_m, rounded_k, dtype=scales_linear.dtype, device=scales_linear.device)
     scales_padded[:m, :k] = scales_linear
 
     # Calculate tile dimensions
-    # IMPORTANT: Swizzled layout uses numCols (original column count) to calculate numKTiles
+    # Swizzled layout uses numCols (original column count) to calculate numKTiles
     # NOT k (scales count) to calculate k_tiles
     m_tiles = rounded_m // 128
     f = block_size * 4  # 64
-    numKTiles = (num_cols + f - 1) // f  # Based on numCols, not k!
-    k_tiles = (rounded_k + f - 1) // f  # Used for processing chunks
+    numKTiles = (num_cols + f - 1) // f
 
     # Swizzled layout structure: [numMTiles=40, numKTiles=80, 32, 4, 4]
     # We need to organize all k=320 scales into this structure
@@ -181,7 +177,6 @@ def _create_quantized_linear(original_linear, weight_key, weight_dict):
     # weight_scale_swizzled = convert_scale_into_swizzle(
     #     weight_scale, m, k, num_cols=in_features)
 
-    # Get bias if exists
     bias_tensor = None
     if bias:
         bias_key = weight_key.replace(".weight", ".bias")
@@ -223,7 +218,6 @@ def create_quantized_wan_model(quantized_ckpt_dir, original_ckpt_dir=None, subfo
     config_file = os.path.join(config_path, "config.json")
 
     if os.path.exists(config_file):
-        # Config exists in quantized directory
         model = WanModel.from_pretrained(
             quantized_ckpt_dir, subfolder=subfolder)
     elif original_ckpt_dir is not None:

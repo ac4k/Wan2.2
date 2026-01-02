@@ -545,7 +545,6 @@ class WanT2VW4A16:
             else:
                 raise NotImplementedError("Unsupported solver.")
 
-
             latents = noise
 
             arg_c = {'context': context, 'seq_len': seq_len}
