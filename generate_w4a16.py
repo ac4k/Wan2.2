@@ -34,7 +34,6 @@ EXAMPLE_PROMPT = {
 
 
 def _validate_args(args):
-    # Basic check
     assert args.original_ckpt_dir is not None, "Please specify the original checkpoint directory (--original_ckpt_dir)."
     assert args.quantized_ckpt_dir is not None, "Please specify the quantized checkpoint directory (--quantized_ckpt_dir)."
     assert args.task in WAN_CONFIGS, f"Unsupport task: {args.task}"
@@ -209,9 +208,7 @@ def _parse_args():
 
 
 def _init_logging(rank):
-    # logging
     if rank == 0:
-        # set format
         logging.basicConfig(
             level=logging.INFO,
             format="[%(asctime)s] %(levelname)s: %(message)s",
@@ -445,8 +442,7 @@ class WanT2VW4A16:
             get_sampling_sigmas,
             retrieve_timesteps,
         )
-
-        # preprocess
+        torch.cuda.reset_peak_memory_stats()
         guide_scale = (guide_scale, guide_scale) if isinstance(
             guide_scale, float) else guide_scale
         F = frame_num
@@ -549,7 +545,7 @@ class WanT2VW4A16:
             else:
                 raise NotImplementedError("Unsupported solver.")
 
-            # sample videos
+
             latents = noise
 
             arg_c = {'context': context, 'seq_len': seq_len}
@@ -649,7 +645,8 @@ class WanT2VW4A16:
             torch.cuda.synchronize()
         if dist.is_initialized():
             dist.barrier()
-
+        peak_memory = torch.cuda.max_memory_allocated()
+        logging.info(f"Peak GPU memory: {peak_memory / 1024**3:.2f} GB")
         return videos[0] if self.rank == 0 else None
 
 
@@ -881,6 +878,7 @@ class WanI2VW4A16:
             get_sampling_sigmas,
             retrieve_timesteps,
         )
+        torch.cuda.reset_peak_memory_stats()
 
         # preprocess
         guide_scale = (guide_scale, guide_scale) if isinstance(
@@ -1131,6 +1129,8 @@ class WanI2VW4A16:
         if dist.is_initialized():
             dist.barrier()
 
+        peak_memory = torch.cuda.max_memory_allocated()
+        logging.info(f"Peak GPU memory: {peak_memory / 1024**3:.2f} GB")
         return videos[0] if self.rank == 0 else None
 
 

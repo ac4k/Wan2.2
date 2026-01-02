@@ -22,7 +22,7 @@ class QuantizedLinear(nn.Module):
 
         # Register buffers for quantized weights
         self.register_buffer('weight_fp4', None)  # uint8, packed fp4
-        self.register_buffer('weight_scale', None)  # float8_e4m3fn, swizzled
+        self.register_buffer('weight_scale', None)
         self.register_buffer('weight_global_scale', None)  # float32
         self.register_buffer(
             'bias', None if not bias else torch.zeros(out_features))
