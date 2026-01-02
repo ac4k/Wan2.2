@@ -1,8 +1,11 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
-from wan.utils.utils import merge_video_audio, save_video, str2bool
-from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
-from wan.distributed.util import init_distributed_group
-from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
+import os
+import sys
+import time
+import warnings
+from datetime import datetime
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import wan
 from PIL import Image
 import torch.distributed as dist
@@ -10,11 +13,10 @@ import torch
 import random
 import argparse
 import logging
-import os
-import sys
-import time
-import warnings
-from datetime import datetime
+from wan.utils.utils import merge_video_audio, save_video, str2bool
+from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
+from wan.distributed.util import init_distributed_group
+from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 
 warnings.filterwarnings('ignore')
 
@@ -312,7 +314,7 @@ class WanT2VW4A16:
         # Load quantized DiT models from quantized_ckpt_dir
         logging.info(
             f"Loading quantized DiT models from: {quantized_ckpt_dir}")
-        from wan.modules.quant_model import create_quantized_wan_model
+        from wan.modules.ac4k_quant_model import create_quantized_wan_model
 
         # Timing: Low noise model loading
         t_start = time.time()
@@ -744,7 +746,7 @@ class WanI2VW4A16:
         # Load quantized DiT models from quantized_ckpt_dir
         logging.info(
             f"Loading quantized DiT models from: {quantized_ckpt_dir}")
-        from wan.modules.quant_model import create_quantized_wan_model
+        from wan.modules.ac4k_quant_model import create_quantized_wan_model
 
         # Timing: Low noise model loading
         t_start = time.time()

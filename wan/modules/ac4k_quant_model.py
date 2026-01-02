@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from safetensors import safe_open
 from .model import WanModel
-from .quant_linear import QuantizedLinear
+from .ac4k_quant_linear import QuantizedLinear
 
 
 def replace_linear_with_quantized(model, weight_dict):
