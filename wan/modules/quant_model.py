@@ -114,13 +114,7 @@ def convert_scale_into_swizzle(scales_linear: torch.Tensor, m: int, k: int, bloc
 
     # Process all k scales: organize them into swizzled layout
     # Reshape linear scales to [m_tiles, 128, k]
-    scales_reshaped = scales_padded.reshape(m_tiles, 128, rounded_k)
-
-    # First, reshape to [m_tiles, 4, 32, rounded_k]
-    scales_reshaped = scales_reshaped.reshape(m_tiles, 4, 32, rounded_k)
-
-    # Reshape rounded_k to [numKTiles, 4]
-    scales_reshaped = scales_reshaped.reshape(m_tiles, 4, 32, numKTiles, 4)
+    scales_reshaped = scales_padded.reshape(m_tiles, 4, 32, numKTiles, 4)
 
     # Permute to [m_tiles, numKTiles, 32, 4, 4] (swizzled layout structure)
     scales_swizzled = scales_reshaped.permute(0, 3, 2, 1, 4)
@@ -173,9 +167,9 @@ def _create_quantized_linear(original_linear, weight_key, weight_dict):
     m, k = weight_scale.shape  # m = out_features, k = in_features // 16
 
     # TODO: change to swizzled layout after using linear layout in weight scale
-    weight_scale_swizzled = weight_scale
-    # weight_scale_swizzled = convert_scale_into_swizzle(
-    #     weight_scale, m, k, num_cols=in_features)
+    # weight_scale_swizzled = weight_scale
+    weight_scale_swizzled = convert_scale_into_swizzle(
+        weight_scale, m, k, num_cols=in_features)
 
     bias_tensor = None
     if bias:
