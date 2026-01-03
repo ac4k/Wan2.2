@@ -3,6 +3,7 @@ Modified WanModel with W4A16 quantization support
 """
 import os
 import glob
+import json
 import torch
 import torch.nn as nn
 from safetensors import safe_open
@@ -204,37 +205,61 @@ def load_quantized_weights(checkpoint_dir, subfolder=None):
     return weight_dict
 
 
-def create_quantized_wan_model(quantized_ckpt_dir, original_ckpt_dir=None, subfolder=None):
-    # First try from quantized directory, if not found, try from original directory
-    model = None
+def create_quantized_wan_model(quantized_ckpt_dir, subfolder=None):
     config_path = os.path.join(
         quantized_ckpt_dir, subfolder) if subfolder else quantized_ckpt_dir
     config_file = os.path.join(config_path, "config.json")
 
-    if os.path.exists(config_file):
-        model = WanModel.from_pretrained(
-            quantized_ckpt_dir, subfolder=subfolder)
-    elif original_ckpt_dir is not None:
-        # Try to load config from original directory
-        original_config_path = os.path.join(
-            original_ckpt_dir, subfolder) if subfolder else original_ckpt_dir
-        original_config_file = os.path.join(
-            original_config_path, "config.json")
-        if os.path.exists(original_config_file):
-            model = WanModel.from_pretrained(
-                original_ckpt_dir, subfolder=subfolder)
-        else:
-            # Fallback: try parent directory
-            model = WanModel.from_pretrained(original_ckpt_dir)
-    else:
-        model = WanModel.from_pretrained(quantized_ckpt_dir)
-
-    if model is None:
+    if not os.path.exists(config_file):
         raise ValueError(
-            f"Could not load model config. Please ensure config.json exists in {quantized_ckpt_dir} or provide original_ckpt_dir.")
+            f"Config file not found: {config_file}. "
+            f"Please ensure config.json exists in {quantized_ckpt_dir}.")
+
+    with open(config_file, 'r') as f:
+        config_dict = json.load(f)
+
+    model_config = {}
+    for config_key in config_dict.keys():
+        model_config[config_key] = config_dict[config_key]
+
+    model = WanModel(**model_config)
 
     weight_dict = load_quantized_weights(
         quantized_ckpt_dir, subfolder=subfolder)
+
+    # Replace quantized linear layers
     replace_linear_with_quantized(model, weight_dict)
+
+    # Load non-quantized weights (norm layers, embeddings, etc.)
+    quantized_keys = set()
+    for key in weight_dict.keys():
+        if key.endswith('_scale') or key.endswith('_global_scale'):
+            base_key = key.rsplit('_', 1)[0] if key.endswith(
+                '_scale') else key.rsplit('_global_scale', 1)[0]
+            quantized_keys.add(base_key)
+
+    for key, value in weight_dict.items():
+        if key.endswith('_scale') or key.endswith('_global_scale'):
+            continue
+        if key in quantized_keys:
+            continue  # This is a quantized weight, already handled by replace_linear_with_quantized
+
+        # Try to load non-quantized weights
+        parts = key.split('.')
+        obj = model
+        for part in parts[:-1]:
+            obj = getattr(obj, part)
+
+        param_name = parts[-1]
+        if hasattr(obj, param_name):
+            param = getattr(obj, param_name)
+            if isinstance(param, torch.nn.Parameter) or isinstance(param, torch.Tensor):
+                if value.shape == param.shape:
+                    if isinstance(param, torch.nn.Parameter):
+                        param.data.copy_(value)
+                    else:
+                        setattr(obj, param_name, value)
+                else:
+                    raise ValueError(f"Shape mismatch for {key}: expected {param.shape}, got {value.shape}")
 
     return model

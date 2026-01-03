@@ -1,4 +1,3 @@
-# Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import os
 import sys
 import time
@@ -13,7 +12,7 @@ import torch
 import random
 import argparse
 import logging
-from wan.utils.utils import merge_video_audio, save_video, str2bool
+from wan.utils.utils import save_video, str2bool
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.distributed.util import init_distributed_group
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
@@ -36,7 +35,6 @@ EXAMPLE_PROMPT = {
 
 
 def _validate_args(args):
-    assert args.original_ckpt_dir is not None, "Please specify the original checkpoint directory (--original_ckpt_dir)."
     assert args.quantized_ckpt_dir is not None, "Please specify the quantized checkpoint directory (--quantized_ckpt_dir)."
     assert args.task in WAN_CONFIGS, f"Unsupport task: {args.task}"
     assert args.task in EXAMPLE_PROMPT, f"Unsupport task: {args.task}"
@@ -95,11 +93,6 @@ def _parse_args():
         default=None,
         help="How many frames of video are generated. The number should be 4n+1"
     )
-    parser.add_argument(
-        "--original_ckpt_dir",
-        type=str,
-        default=None,
-        help="The path to the original checkpoint directory containing T5 and VAE weights.")
     parser.add_argument(
         "--quantized_ckpt_dir",
         type=str,
@@ -228,7 +221,6 @@ class WanT2VW4A16:
     def __init__(
         self,
         config,
-        original_ckpt_dir,
         quantized_ckpt_dir,
         device_id=0,
         rank=0,
@@ -245,8 +237,6 @@ class WanT2VW4A16:
         Args:
             config (EasyDict):
                 Object containing model parameters initialized from config.py
-            original_ckpt_dir (`str`):
-                Path to directory containing original T5 and VAE model checkpoints
             quantized_ckpt_dir (`str`):
                 Path to directory containing quantized DiT model checkpoints (low_noise and high_noise)
             device_id (`int`,  *optional*, defaults to 0):
@@ -281,22 +271,19 @@ class WanT2VW4A16:
         from functools import partial
         shard_fn = partial(shard_model, device_id=device_id)
 
-        # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
         from wan.modules.t5 import T5EncoderModel
         from wan.modules.vae2_1 import Wan2_1_VAE
 
         # Timing: T5 loading
         t_start = time.time()
-        logging.info(
-            f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
             checkpoint_path=os.path.join(
-                original_ckpt_dir, config.t5_checkpoint),
+                quantized_ckpt_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(
-                original_ckpt_dir, config.t5_tokenizer),
+                quantized_ckpt_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
         t_t5 = time.time() - t_start
         logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
@@ -306,12 +293,11 @@ class WanT2VW4A16:
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
         self.vae = Wan2_1_VAE(
-            vae_pth=os.path.join(original_ckpt_dir, config.vae_checkpoint),
+            vae_pth=os.path.join(quantized_ckpt_dir, config.vae_checkpoint),
             device=self.device)
         t_vae = time.time() - t_start
         logging.info(f"[TIMING] VAE model loading: {t_vae:.2f}s")
 
-        # Load quantized DiT models from quantized_ckpt_dir
         logging.info(
             f"Loading quantized DiT models from: {quantized_ckpt_dir}")
         from wan.modules.ac4k_quant_model import create_quantized_wan_model
@@ -320,7 +306,6 @@ class WanT2VW4A16:
         t_start = time.time()
         self.low_noise_model = create_quantized_wan_model(
             quantized_ckpt_dir=quantized_ckpt_dir,
-            original_ckpt_dir=original_ckpt_dir,
             subfolder=config.low_noise_checkpoint)
         t_low_load = time.time() - t_start
         logging.info(f"[TIMING] Low noise model loading: {t_low_load:.2f}s")
@@ -340,7 +325,6 @@ class WanT2VW4A16:
         t_start = time.time()
         self.high_noise_model = create_quantized_wan_model(
             quantized_ckpt_dir=quantized_ckpt_dir,
-            original_ckpt_dir=original_ckpt_dir,
             subfolder=config.high_noise_checkpoint)
         t_high_load = time.time() - t_start
         logging.info(f"[TIMING] High noise model loading: {t_high_load:.2f}s")
@@ -660,7 +644,6 @@ class WanI2VW4A16:
     def __init__(
         self,
         config,
-        original_ckpt_dir,
         quantized_ckpt_dir,
         device_id=0,
         rank=0,
@@ -677,8 +660,6 @@ class WanI2VW4A16:
         Args:
             config (EasyDict):
                 Object containing model parameters initialized from config.py
-            original_ckpt_dir (`str`):
-                Path to directory containing original T5 and VAE model checkpoints
             quantized_ckpt_dir (`str`):
                 Path to directory containing quantized DiT model checkpoints (low_noise and high_noise)
             device_id (`int`,  *optional*, defaults to 0):
@@ -713,22 +694,19 @@ class WanI2VW4A16:
         from functools import partial
         shard_fn = partial(shard_model, device_id=device_id)
 
-        # T5 and VAE use original data types (not quantized) - load from original_ckpt_dir
         from wan.modules.t5 import T5EncoderModel
         from wan.modules.vae2_1 import Wan2_1_VAE
 
         # Timing: T5 loading
         t_start = time.time()
-        logging.info(
-            f"Loading T5 and VAE from original checkpoint: {original_ckpt_dir}")
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
             device=torch.device('cpu'),
             checkpoint_path=os.path.join(
-                original_ckpt_dir, config.t5_checkpoint),
+                quantized_ckpt_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(
-                original_ckpt_dir, config.t5_tokenizer),
+                quantized_ckpt_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
         t_t5 = time.time() - t_start
         logging.info(f"[TIMING] T5 model loading: {t_t5:.2f}s")
@@ -738,7 +716,7 @@ class WanI2VW4A16:
         self.vae_stride = config.vae_stride
         self.patch_size = config.patch_size
         self.vae = Wan2_1_VAE(
-            vae_pth=os.path.join(original_ckpt_dir, config.vae_checkpoint),
+            vae_pth=os.path.join(quantized_ckpt_dir, config.vae_checkpoint),
             device=self.device)
         t_vae = time.time() - t_start
         logging.info(f"[TIMING] VAE model loading: {t_vae:.2f}s")
@@ -752,7 +730,6 @@ class WanI2VW4A16:
         t_start = time.time()
         self.low_noise_model = create_quantized_wan_model(
             quantized_ckpt_dir=quantized_ckpt_dir,
-            original_ckpt_dir=original_ckpt_dir,
             subfolder=config.low_noise_checkpoint)
         t_low_load = time.time() - t_start
         logging.info(f"[TIMING] Low noise model loading: {t_low_load:.2f}s")
@@ -772,7 +749,6 @@ class WanI2VW4A16:
         t_start = time.time()
         self.high_noise_model = create_quantized_wan_model(
             quantized_ckpt_dir=quantized_ckpt_dir,
-            original_ckpt_dir=original_ckpt_dir,
             subfolder=config.high_noise_checkpoint)
         t_high_load = time.time() - t_start
         logging.info(f"[TIMING] High noise model loading: {t_high_load:.2f}s")
@@ -1223,13 +1199,20 @@ def generate(args):
         args.prompt = input_prompt[0]
         logging.info(f"Extended prompt: {args.prompt}")
 
+    # TODO: FSDP and Ulysses parallelism are not finished and not verified yet
+    if args.t5_fsdp:
+        raise NotImplementedError("T5 FSDP is unsupported yet.")
+    if args.dit_fsdp:
+        raise NotImplementedError("DiT FSDP is unsupported yet.")
+    if args.ulysses_size > 1:
+        raise NotImplementedError("Ulysses parallelism is unsupported yet.")
+
     if "t2v" in args.task:
         # Timing: Pipeline initialization
         t_init_start = time.time()
         logging.info("Creating WanT2V pipeline with W4A16 quantization.")
         wan_t2v = WanT2VW4A16(
             config=cfg,
-            original_ckpt_dir=args.original_ckpt_dir,
             quantized_ckpt_dir=args.quantized_ckpt_dir,
             device_id=device,
             rank=rank,
@@ -1275,7 +1258,6 @@ def generate(args):
         logging.info("Creating WanI2V pipeline with W4A16 quantization.")
         wan_i2v = WanI2VW4A16(
             config=cfg,
-            original_ckpt_dir=args.original_ckpt_dir,
             quantized_ckpt_dir=args.quantized_ckpt_dir,
             device_id=device,
             rank=rank,
