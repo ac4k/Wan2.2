@@ -1,3 +1,190 @@
+# AC4K NVFP4 Quantization for Wan2.2
+
+**This repository is forked from the official Wan2.2 repository: https://github.com/Wan-Video/Wan2.2**
+
+
+## New Features
+Based on the original Wan2.2 code, we quantize the DiT model to NVFP4 format using the ac4k_kernel repository (https://github.com/ac4k/ac4k_kernel) and accelerate the model using ac4k_kernel's NVFP4 matmul and attention kernels.
+
+1. **This codebase enables wan2.2-T2V-A14B and Wan2.2-I2V-A14B video generation models with 720P and 480P resolution on a single RTX5090 GPU, the VRAM memory usage peak is 20.05GB with 720P and 81 Frames generation task, which means there is still about 12GB VRAM free to use on this task**
+2. **We greatly reduce memory usage to make it possible to run wan2.2-A14B on one consumer GPU which is normally run on a high-end compute GPU server such as 8xA100 server or 8xH100 server.**
+3. **We enable NVFP4 while keeping the quality of generated videos on the same level as run in BF16 with no noticeable compromise of generated video quality.**
+4. **Our generation speed on RTX5090 is comparable with H100 with a generation time of ~1240 seconds for a 5s (81 frames), 720P resolution video with default sampling parameters (40 sample steps)**
+
+## Model Downloads
+
+We provide downloads for Wan2.2-T2V-A14B and Wan2.2-I2V-A14B models on HuggingFace:
+
+**T2V Model:**
+https://huggingface.co/ac4k-org/wan2.2-T2V-A14B-NVFP4
+
+**I2V Model:**
+https://huggingface.co/ac4k-org/wan2.2-I2V-A14B-NVFP4
+
+**Note:** Only the DiT model weights are quantized to NVFP4 format. The T5 and VAE model weights are not quantized, so except for the DiT model weights, all other weights are consistent with the original official model: https://huggingface.co/Wan-AI
+
+## Video Quality Comparison
+
+We randomly selected some prompts from the vbench test prompt set and used these prompts to generate videos in the T2V task. The following shows a comparison of videos generated at BF16 and NVFP4 respectively.
+
+<div align="center">
+
+<table>
+<tr>
+<td colspan="2" align="center"><b>a person swimming in ocean</b></td>
+<td colspan="2" align="center"><b>a bird flying over a snowy forest</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_1_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_1_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_6_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_6_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>a dog running happily</b></td>
+<td colspan="2" align="center"><b>a bear climbing a tree</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_7_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_7_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_9_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_9_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>castle</b></td>
+<td colspan="2" align="center"><b>kitchen</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_12_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_12_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_15_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_15_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>nursery</b></td>
+<td colspan="2" align="center"><b>river</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_16_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_16_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_17_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_17_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>Close up of grapes on a rotating table.</b></td>
+<td colspan="2" align="center"><b>Robot dancing in Times Square.</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_19_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_19_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_22_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_22_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>A cat eating food out of a bowl</b></td>
+<td colspan="2" align="center"><b>A beautiful coastal beach in spring, waves lapping on sand, in super slow motion</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_25_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_25_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_27_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_27_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>Gwen Stacy reading a book, in super slow motion</b></td>
+<td colspan="2" align="center"><b>A boat sailing leisurely along the Seine River with the Eiffel Tower in background, zoom out</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_31_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_31_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_32_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_32_nvfp4.gif" width="150"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><b>A person is riding a bike</b></td>
+<td colspan="2" align="center"><b>A person is bungee jumping</b></td>
+</tr>
+<tr>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_35_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_35_nvfp4.gif" width="150"/></td>
+<td align="center"><b>BF16</b><br/><img src="assets/video_gifs/prompt_39_bf16.gif" width="150"/></td>
+<td align="center"><b>NVFP4</b><br/><img src="assets/video_gifs/prompt_39_nvfp4.gif" width="150"/></td>
+</tr>
+</table>
+
+</div>
+
+## Environment Setup
+**This code version requires CUDA 12.8 environment and RTX5090 GPU, a docker environment is also highly recommended**
+
+1. **run a basic docker environment(recommended but not must):**
+   ```bash
+    docker run -it \
+    --name ${CONTAINER_NAME} \
+    --gpus '"device=0"' \
+    --cap-add=SYS_ADMIN \
+    --security-opt seccomp=unconfined \
+    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -v ${HOME_DIR}:${HOME_DIR} \
+    -v /data:/data \
+    -v /etc/passwd:/etc/passwd:ro \
+    -v /etc/group:/etc/group:ro \
+    -w ${HOME_DIR} \
+    --user root \
+    nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04 /bin/bash
+   ```
+2. **Install Wan2.2 required dependencies**:
+
+   ```bash
+   cd /path/to/Wan2.2
+   pip install -r requirements.txt
+   ```
+
+3. **Install ac4k_kernel**:
+
+   ```bash
+   git clone https://github.com/ac4k/ac4k_kernel.git
+   cd /path/to/ac4k_kernel
+   pip install -r requirements.txt
+   pip install -e . --no-build-isolation
+   ```
+
+## Model Inference
+
+### Text-to-Video (T2V) Generation
+T2V inference command:
+
+```bash
+cd ac4k
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python3 generate_nvfp4.py \
+    --task t2v-A14B \
+    --size 1280*720 \
+    --quantized_ckpt_dir /path/to/model \
+    --offload_model True \
+    --convert_model_dtype \
+    --prompt "Your text prompt here"
+```
+
+### Image-to-Video (I2V) Generation
+I2V inference command:
+
+```bash
+cd ac4k
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python3 generate_nvfp4.py \
+    --task i2v-A14B \
+    --size 1280*720 \
+    --quantized_ckpt_dir /path/to/model \
+    --offload_model True \
+    --convert_model_dtype \
+    --image /path/to/input/image.jpg \
+    --prompt "Your text prompt here"
+```
+
+**following is Wan2.2 original project information and README content**
+
+
 # Wan2.2
 
 <p align="center">

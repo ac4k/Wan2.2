@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
-
-from .attention import flash_attention
+import os
+from ac4k_kernel.ops import attention
 
 __all__ = ['WanModel']
 
@@ -36,7 +36,7 @@ def rope_params(max_seq_len, dim, theta=10000):
 
 
 @torch.amp.autocast('cuda', enabled=False)
-def rope_apply(x, grid_sizes, freqs):
+def rope_apply(x, grid_sizes, freqs, data_type=torch.bfloat16):
     n, c = x.size(2), x.size(3) // 2
 
     # split freqs
@@ -60,10 +60,10 @@ def rope_apply(x, grid_sizes, freqs):
         # apply rotary embedding
         x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
         x_i = torch.cat([x_i, x[i, seq_len:]])
-
+        x_i = x_i.to(data_type)
         # append to collection
         output.append(x_i)
-    return torch.stack(output).float()
+    return torch.stack(output)
 
 
 class WanRMSNorm(nn.Module):
@@ -141,13 +141,9 @@ class WanSelfAttention(nn.Module):
             return q, k, v
 
         q, k, v = qkv_fn(x)
-
-        x = flash_attention(
-            q=rope_apply(q, grid_sizes, freqs),
-            k=rope_apply(k, grid_sizes, freqs),
-            v=v,
-            k_lens=seq_lens,
-            window_size=self.window_size)
+        x = attention(rope_apply(q, grid_sizes, freqs),
+            rope_apply(k, grid_sizes, freqs),
+            v, layout="BNHD", precision="int8+fp8e4m3")
 
         # output
         x = x.flatten(2)
@@ -172,7 +168,8 @@ class WanCrossAttention(WanSelfAttention):
         v = self.v(context).view(b, -1, n, d)
 
         # compute attention
-        x = flash_attention(q, k, v, k_lens=context_lens)
+        x = attention(q, k, v,
+                    layout="BNHD", precision="int8+fp8e4m3")
 
         # output
         x = x.flatten(2)
@@ -405,7 +402,8 @@ class WanModel(ModelMixin, ConfigMixin):
                                dim=1)
 
         # initialize weights
-        self.init_weights()
+        # we rewrite the weight loading function so here we don't need to call it
+        # self.init_weights()
 
     def forward(
         self,
@@ -457,15 +455,19 @@ class WanModel(ModelMixin, ConfigMixin):
         ])
 
         # time embeddings
-        if t.dim() == 1:
-            t = t.expand(t.size(0), seq_len)
         with torch.amp.autocast('cuda', dtype=torch.float32):
-            bt = t.size(0)
-            t = t.flatten()
-            e = self.time_embedding(
-                sinusoidal_embedding_1d(self.freq_dim,
-                                        t).unflatten(0, (bt, seq_len)).float())
-            e0 = self.time_projection(e).unflatten(2, (6, self.dim))
+            if t.dim() == 1:
+                e = self.time_embedding(
+                    sinusoidal_embedding_1d(self.freq_dim, t).float())
+                e0 = self.time_projection(e).reshape(t.size(0), 1, 6, self.dim)
+                e = e.reshape(t.size(0), 1, self.dim)
+            else:
+                bt, l = t.shape
+                t = t.flatten()
+                e = self.time_embedding(
+                    sinusoidal_embedding_1d(self.freq_dim,
+                                            t).unflatten(0, (bt, l)).float())
+                e0 = self.time_projection(e).unflatten(2, (6, self.dim))
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
