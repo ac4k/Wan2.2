@@ -120,22 +120,15 @@ We randomly selected some prompts from the vbench test prompt set and used these
 1. **run a basic docker environment(recommended but not must):**
    ```bash
     docker run -it \
-    --name ${CONTAINER_NAME} \
+    --name wan2.2_docker \
     --gpus '"device=0"' \
-    --cap-add=SYS_ADMIN \
-    --security-opt seccomp=unconfined \
-    -e NVIDIA_DRIVER_CAPABILITIES=all \
-    -v ${HOME_DIR}:${HOME_DIR} \
-    -v /data:/data \
-    -v /etc/passwd:/etc/passwd:ro \
-    -v /etc/group:/etc/group:ro \
-    -w ${HOME_DIR} \
-    --user root \
+    -v /path_to_model_file:/model \
     nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04 /bin/bash
    ```
 2. **Install Wan2.2 required dependencies**:
 
    ```bash
+   git clone https://github.com/ac4k/Wan2.2.git
    cd /path/to/Wan2.2
    pip install -r requirements.txt
    ```
@@ -148,6 +141,7 @@ We randomly selected some prompts from the vbench test prompt set and used these
    pip install -r requirements.txt
    pip install -e . --no-build-isolation
    ```
+The installation process might be a bit slow. You can use `MAX_JOBS=8 pip install -e . --no-build-isolation` to speed it up. Additionally, installing ninja will also provide a performance boost.
 
 ## Model Inference
 
@@ -155,31 +149,27 @@ We randomly selected some prompts from the vbench test prompt set and used these
 T2V inference command:
 
 ```bash
-cd ac4k
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-python3 generate_nvfp4.py \
+python3 ac4k/generate_nvfp4.py \
     --task t2v-A14B \
     --size 1280*720 \
     --quantized_ckpt_dir /path/to/model \
     --offload_model True \
     --convert_model_dtype \
-    --prompt "Your text prompt here"
+    --prompt "A beautiful coastal beach in spring, waves lapping on sand, in super slow motion"
 ```
 
 ### Image-to-Video (I2V) Generation
 I2V inference command:
 
 ```bash
-cd ac4k
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-python3 generate_nvfp4.py \
+python3 ac4k/generate_nvfp4.py \
     --task i2v-A14B \
     --size 1280*720 \
     --quantized_ckpt_dir /path/to/model \
     --offload_model True \
     --convert_model_dtype \
-    --image /path/to/input/image.jpg \
-    --prompt "Your text prompt here"
+    --image examples/i2v_input.JPG \
+    --prompt "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside."
 ```
 
 **following is Wan2.2 original project information and README content**
